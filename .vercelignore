@@ -1,0 +1,8 @@
+.git
+node_modules
+.next
+files
+data
+venv
+__pycache__
+*.pyc
