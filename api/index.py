@@ -22,7 +22,7 @@ app.add_middleware(
 # In-memory storage (Note: Vercel serverless is stateless, this may not persist between requests)
 processed_data = {}
 
-@app.get("/api")
+@app.get("/")
 async def root():
     return {"status": "ok", "message": "Duplicate Detection API is running"}
 
