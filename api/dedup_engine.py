@@ -52,11 +52,10 @@ def normalize_address(raw: str) -> str:
 def extract_municipality(addr_norm: str) -> str:
     if not addr_norm:
         return "__unknown__"
-    m = re.search(r"(北海道|.{2,3}[都道府県])(.{2,6}[市区町村郡])?", addr_norm)
+    # Improved regex for Japanese addresses
+    m = re.search(r"(北海道|.{2,3}[都道府県])(.{2,6}[市区町村郡])", addr_norm)
     if m:
-        pref = (m.group(1) or "")[:4]
-        city = (m.group(2) or "")[:5]
-        return pref + city
+        return m.group(1) + m.group(2)
     return addr_norm[:6] if len(addr_norm) >= 6 else addr_norm
 
 def normalize_name(raw: str) -> str:
@@ -85,6 +84,9 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
     df["_base_name"] = df["_norm_name"].apply(name_base)
     df["_area_code"] = df["_norm_phone"].apply(lambda p: extract_area_code(p) if p else "")
     df["_municipality"] = df["_norm_address"].apply(extract_municipality)
+
+    # Check if phone number is valid (10-11 digits)
+    df["is_phone_invalid"] = df["_norm_phone"].apply(lambda x: len(x) < 10)
 
     df["_is_dup"] = False
     df["_merged_to"] = ""
@@ -168,18 +170,24 @@ def run_dedup(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
                     df.at[idx_b, "_dup_score"] = round(score, 1)
                     dup_counts[reason] += 1
 
-    out_cols = ["name", "address", "phone", "url", "source", "genre", "rating"]
-    dup_cols = ["name", "address", "phone", "url", "source", "_merged_to", "_dup_reason", "_dup_score"]
+    # Add columns to output
+    df["municipality"] = df["_municipality"]
 
-    cleaned = df[~df["_is_dup"]][out_cols].reset_index(drop=True)
-    duplicates = df[df["_is_dup"]][dup_cols].reset_index(drop=True)
+    out_cols = ["name", "address", "phone", "url", "source", "genre", "rating", "municipality", "is_phone_invalid"]
+    dup_cols = ["name", "address", "phone", "url", "source", "_merged_to", "_dup_reason", "_dup_score", "municipality", "is_phone_invalid"]
+
+    # Sort by municipality (primary) and then push invalid phones to the bottom of each group
+    cleaned = df[~df["_is_dup"]][out_cols].sort_values(["municipality", "is_phone_invalid"]).reset_index(drop=True)
+    duplicates = df[df["_is_dup"]][dup_cols].sort_values(["municipality", "is_phone_invalid"]).reset_index(drop=True)
 
     summary = {
         "input_count": len(df),
         "dup_count": len(duplicates),
         "output_count": len(cleaned),
         "dup_rate": round(len(duplicates) / len(df) * 100, 1) if len(df) else 0,
-        "reasons": dup_counts
+        "reasons": dup_counts,
+        "invalid_phone_count": int(cleaned["is_phone_invalid"].sum()),
+        "municipality_counts": cleaned["municipality"].value_counts().to_dict()
     }
 
     return cleaned, duplicates, summary

@@ -86,8 +86,8 @@ export default function Home() {
             backgroundColor: 'rgba(255, 255, 255, 0.02)',
             transition: 'border-color 0.2s'
           }}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
+          onDragOver={(e: React.DragEvent<HTMLDivElement>) => e.preventDefault()}
+          onDrop={(e: React.DragEvent<HTMLDivElement>) => {
             e.preventDefault();
             if (e.dataTransfer.files) setFiles(e.dataTransfer.files);
           }}
@@ -146,15 +146,31 @@ export default function Home() {
               <p style={{ color: 'hsl(var(--muted-foreground))', fontSize: '0.9rem' }}>クリーンな出力</p>
               <h3 style={{ fontSize: '2.5rem', color: '#00ff88' }}>{summary.output_count.toLocaleString()}</h3>
             </div>
+            <div className="card glass">
+              <p style={{ color: 'hsl(var(--muted-foreground))', fontSize: '0.9rem' }}>電話番号不備</p>
+              <h3 style={{ fontSize: '2.5rem', color: '#ffaa00' }}>{summary.invalid_phone_count.toLocaleString()}</h3>
+            </div>
+          </div>
+
+          <div className="card glass" style={{ marginBottom: '2rem' }}>
+            <h2 style={{ marginBottom: '1.5rem' }}>市区町村別の件数</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+              {Object.entries(summary.municipality_counts).sort(([a], [b]) => a.localeCompare(b)).map(([mun, count]) => (
+                <div key={mun} style={{ padding: '0.75rem', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: 'var(--radius)', display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontWeight: '600' }}>{mun}</span>
+                  <span style={{ color: 'hsl(var(--primary))' }}>{String(count)} 件</span>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="card glass" style={{ marginBottom: '2rem' }}>
             <h2 style={{ marginBottom: '1.5rem' }}>重複排除サマリー</h2>
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-              {Object.entries(summary.reasons).map(([reason, count]: [any, any]) => (
+              {Object.entries(summary.reasons).map(([reason, count]) => (
                 <div key={reason} style={{ flex: '1', minWidth: '150px' }}>
                   <p style={{ fontSize: '0.8rem', color: 'hsl(var(--muted-foreground))', textTransform: 'uppercase' }}>{reason.replace(/_/g, ' ')}</p>
-                  <p style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{count}</p>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{String(count)}</p>
                 </div>
               ))}
               <div style={{ flex: '1', minWidth: '150px' }}>
