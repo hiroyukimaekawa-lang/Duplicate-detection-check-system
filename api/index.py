@@ -22,11 +22,11 @@ app.add_middleware(
 # In-memory storage (Note: Vercel serverless is stateless, this may not persist between requests)
 processed_data = {}
 
-@app.get("/")
+@app.get("/api")
 async def root():
     return {"status": "ok", "message": "Duplicate Detection API is running"}
 
-@app.post("/upload")
+@app.post("/api/upload")
 async def upload_files(files: List[UploadFile] = File(...)):
     dfs = []
     for file in files:
@@ -57,7 +57,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
     return summary
 
-@app.get("/download/cleaned")
+@app.get("/api/download/cleaned")
 async def download_cleaned():
     if "last_run" not in processed_data:
         raise HTTPException(status_code=404, detail="No data available")
@@ -70,7 +70,7 @@ async def download_cleaned():
         "filename": "cleaned.csv"
     }
 
-@app.get("/download/duplicates")
+@app.get("/api/download/duplicates")
 async def download_duplicates():
     if "last_run" not in processed_data:
         raise HTTPException(status_code=404, detail="No data available")
