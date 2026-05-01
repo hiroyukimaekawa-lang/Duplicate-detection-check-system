@@ -52,8 +52,8 @@ def normalize_address(raw: str) -> str:
 def extract_municipality(addr_norm: str) -> str:
     if not addr_norm:
         return "__unknown__"
-    # Capture Prefecture + (City+Ward OR Municipality)
-    m = re.search(r"(北海道|.{2,3}[都道府県])((?:.{1,5}市)(?:.{1,5}区)|.{1,5}[市区町村郡])", addr_norm)
+    # Capture Prefecture + Municipality (stops at City/Town/Village level)
+    m = re.search(r"(北海道|.{2,3}[都道府県])(.{2,6}[市区町村郡])", addr_norm)
     if m:
         return m.group(1) + m.group(2)
     return addr_norm[:6] if len(addr_norm) >= 6 else addr_norm
