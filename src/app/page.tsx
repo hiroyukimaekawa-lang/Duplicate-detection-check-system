@@ -45,16 +45,16 @@ export default function Home() {
     }
   };
 
-  const handleDownload = async (type: 'cleaned' | 'duplicates') => {
+  const handleDownload = async () => {
     try {
-      const response = await fetch(`/api/download/${type}`);
-      const data = await response.json();
+      const response = await fetch('/api/download');
+      if (!response.ok) throw new Error('Download failed');
       
-      const blob = new Blob([data.content], { type: 'text/csv;charset=utf-8;' });
+      const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', data.filename);
+      link.setAttribute('download', 'dedup_results.xlsx');
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -155,7 +155,7 @@ export default function Home() {
           <div className="card glass" style={{ marginBottom: '2rem' }}>
             <h2 style={{ marginBottom: '1.5rem' }}>市区町村別の件数</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-              {Object.entries(summary.municipality_counts).sort(([a], [b]) => a.localeCompare(b)).map(([mun, count]) => (
+              {Object.entries(summary.municipality_counts).sort(([, a]: any, [, b]: any) => b - a).map(([mun, count]) => (
                 <div key={mun} style={{ padding: '0.75rem', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: 'var(--radius)', display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ fontWeight: '600' }}>{mun}</span>
                   <span style={{ color: 'hsl(var(--primary))' }}>{String(count)} 件</span>
@@ -181,11 +181,8 @@ export default function Home() {
           </div>
 
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-            <button className="btn btn-secondary" onClick={() => handleDownload('cleaned')}>
-              クリーンなCSVをダウンロード
-            </button>
-            <button className="btn btn-secondary" onClick={() => handleDownload('duplicates')}>
-              重複ログをダウンロード
+            <button className="btn btn-secondary" onClick={handleDownload} style={{ padding: '1rem 3rem' }}>
+              Excel形式で結果をダウンロード（2タブ）
             </button>
           </div>
         </div>

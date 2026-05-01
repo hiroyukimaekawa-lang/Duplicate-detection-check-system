@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import pandas as pd
 import io
 import os
@@ -57,31 +58,26 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
     return summary
 
-@app.get("/api/download/cleaned")
-async def download_cleaned():
+@app.get("/api/download")
+async def download_results():
     if "last_run" not in processed_data:
         raise HTTPException(status_code=404, detail="No data available")
     
-    df = processed_data["last_run"]["cleaned"]
-    output = io.StringIO()
-    df.to_csv(output, index=False, encoding="utf-8-sig")
-    return {
-        "content": output.getvalue(),
-        "filename": "cleaned.csv"
-    }
-
-@app.get("/api/download/duplicates")
-async def download_duplicates():
-    if "last_run" not in processed_data:
-        raise HTTPException(status_code=404, detail="No data available")
+    cleaned = processed_data["last_run"]["cleaned"]
+    duplicates = processed_data["last_run"]["duplicates"]
     
-    df = processed_data["last_run"]["duplicates"]
-    output = io.StringIO()
-    df.to_csv(output, index=False, encoding="utf-8-sig")
-    return {
-        "content": output.getvalue(),
-        "filename": "duplicates.csv"
-    }
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        cleaned.to_excel(writer, index=False, sheet_name='クリーンデータ')
+        duplicates.to_excel(writer, index=False, sheet_name='重複データ')
+    
+    output.seek(0)
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=dedup_results.xlsx"}
+    )
 
 if __name__ == "__main__":
     import uvicorn

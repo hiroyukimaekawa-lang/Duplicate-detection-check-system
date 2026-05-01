@@ -52,8 +52,8 @@ def normalize_address(raw: str) -> str:
 def extract_municipality(addr_norm: str) -> str:
     if not addr_norm:
         return "__unknown__"
-    # Improved regex for Japanese addresses
-    m = re.search(r"(北海道|.{2,3}[都道府県])(.{2,6}[市区町村郡])", addr_norm)
+    # Capture Prefecture + (City+Ward OR Municipality)
+    m = re.search(r"(北海道|.{2,3}[都道府県])((?:.{1,5}市)(?:.{1,5}区)|.{1,5}[市区町村郡])", addr_norm)
     if m:
         return m.group(1) + m.group(2)
     return addr_norm[:6] if len(addr_norm) >= 6 else addr_norm
@@ -172,13 +172,24 @@ def run_dedup(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
 
     # Add columns to output
     df["municipality"] = df["_municipality"]
+    
+    # Calculate counts for sorting
+    counts = df["municipality"].value_counts().to_dict()
+    df["_area_count"] = df["municipality"].map(counts)
 
     out_cols = ["name", "address", "phone", "url", "source", "genre", "rating", "municipality", "is_phone_invalid"]
     dup_cols = ["name", "address", "phone", "url", "source", "_merged_to", "_dup_reason", "_dup_score", "municipality", "is_phone_invalid"]
 
-    # Sort by municipality (primary) and then push invalid phones to the bottom of each group
-    cleaned = df[~df["_is_dup"]][out_cols].sort_values(["municipality", "is_phone_invalid"]).reset_index(drop=True)
-    duplicates = df[df["_is_dup"]][dup_cols].sort_values(["municipality", "is_phone_invalid"]).reset_index(drop=True)
+    # Sort by area count (descending), then municipality name, then phone validity
+    cleaned = df[~df["_is_dup"]][out_cols].copy()
+    cleaned["_count"] = cleaned["municipality"].map(cleaned["municipality"].value_counts())
+    cleaned = cleaned.sort_values(["_count", "municipality", "is_phone_invalid"], ascending=[False, True, True]).drop(columns=["_count"]).reset_index(drop=True)
+    
+    duplicates = df[df["_is_dup"]][dup_cols].copy()
+    # For duplicates, we also want them grouped by the count of their respective area in the CLEANED data for consistency, 
+    # but using their own area count is simpler.
+    duplicates["_count"] = duplicates["municipality"].map(duplicates["municipality"].value_counts())
+    duplicates = duplicates.sort_values(["_count", "municipality", "is_phone_invalid"], ascending=[False, True, True]).drop(columns=["_count"]).reset_index(drop=True)
 
     summary = {
         "input_count": len(df),

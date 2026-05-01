@@ -2,4 +2,5 @@ fastapi
 uvicorn
 pandas
 rapidfuzz
+openpyxl
 python-multipart
