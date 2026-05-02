@@ -68,7 +68,12 @@ async def download_results():
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        cleaned.to_excel(writer, index=False, sheet_name='クリーンデータ')
+        # Separate normal and chain stores into different sheets
+        normal = cleaned[cleaned["is_chain"] == False]
+        chains = cleaned[cleaned["is_chain"] == True]
+        
+        normal.to_excel(writer, index=False, sheet_name='通常店舗')
+        chains.to_excel(writer, index=False, sheet_name='チェーン店舗')
         duplicates.to_excel(writer, index=False, sheet_name='重複データ')
     
     output.seek(0)

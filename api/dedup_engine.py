@@ -85,6 +85,17 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
     df["_area_code"] = df["_norm_phone"].apply(lambda p: extract_area_code(p) if p else "")
     df["_municipality"] = df["_norm_address"].apply(extract_municipality)
 
+    # Chain Detection
+    df["brand"] = df["_base_name"]
+    brand_counts = df["brand"].value_counts()
+    
+    # Keyword-based: if original name had branch words removed, it's likely a chain
+    # Also frequency-based: count >= 5
+    df["is_chain"] = df.apply(
+        lambda r: (brand_counts[r["brand"]] >= 5) or (r["_norm_name"] != r["_base_name"]),
+        axis=1
+    )
+
     # Check if phone number is valid (10-11 digits)
     df["is_phone_invalid"] = df["_norm_phone"].apply(lambda x: len(x) < 10)
 
@@ -120,12 +131,35 @@ def build_blocks(df: pd.DataFrame) -> Dict[str, List[int]]:
 
 def is_duplicate(df: pd.DataFrame, i: int, j: int) -> Tuple[bool, str, float]:
     ri, rj = df.loc[i], df.loc[j]
+    
+    # 1. Same source skip
+    if ri["source"] == rj["source"]:
+        return False, "", 0.0
+
+    # 2. Chain logic
+    # If both are chains, they must have the same address (or very close) to be considered duplicates
+    is_chain_i = ri["is_chain"]
+    is_chain_j = rj["is_chain"]
+
     pi, pj = ri["_norm_phone"], rj["_norm_phone"]
+    ai, aj = ri["_norm_address"], rj["_norm_address"]
+    ni, nj = ri["_norm_name"], rj["_norm_name"]
+
+    # Special handling for chains: strictly require same address/phone
+    if is_chain_i and is_chain_j:
+        if pi and pj and pi == pj:
+            return True, "chain_phone_exact", 100.0
+        if ai and aj:
+            addr_sim = fuzz.partial_ratio(ai, aj)
+            if addr_sim >= THRESH_ADDR:
+                name_sim = fuzz.token_sort_ratio(ni, nj)
+                if name_sim >= THRESH_NAME:
+                    return True, "chain_addr_name_match", float(addr_sim)
+        return False, "", 0.0
+
+    # Normal deduplication logic
     if pi and pj and pi == pj:
         return True, "phone_exact", 100.0
-
-    ni, nj = ri["_norm_name"], rj["_norm_name"]
-    ai, aj = ri["_norm_address"], rj["_norm_address"]
 
     if ni and nj:
         name_sim = fuzz.token_sort_ratio(ni, nj)
@@ -152,7 +186,7 @@ def run_dedup(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     df = preprocess(df)
     blocks = build_blocks(df)
     
-    dup_counts = {"phone_exact": 0, "name_addr_fuzzy": 0, "name_addr_score": 0, "name_area": 0}
+    dup_counts = defaultdict(int)
 
     for block_key, indices in blocks.items():
         if len(indices) < 2: continue
@@ -162,6 +196,7 @@ def run_dedup(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
             if df.at[idx_a, "_is_dup"]: continue
             for idx_b in block_sorted[pos_a + 1:]:
                 if df.at[idx_b, "_is_dup"]: continue
+                
                 dup, reason, score = is_duplicate(df, idx_a, idx_b)
                 if dup:
                     df.at[idx_b, "_is_dup"] = True
@@ -177,8 +212,8 @@ def run_dedup(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     counts = df["municipality"].value_counts().to_dict()
     df["_area_count"] = df["municipality"].map(counts)
 
-    out_cols = ["name", "address", "phone", "url", "source", "genre", "rating", "municipality", "is_phone_invalid"]
-    dup_cols = ["name", "address", "phone", "url", "source", "_merged_to", "_dup_reason", "_dup_score", "municipality", "is_phone_invalid"]
+    out_cols = ["name", "brand", "is_chain", "address", "phone", "url", "source", "genre", "rating", "municipality", "is_phone_invalid"]
+    dup_cols = ["name", "brand", "is_chain", "address", "phone", "url", "source", "_merged_to", "_dup_reason", "_dup_score", "municipality", "is_phone_invalid"]
 
     # Sort by area count (descending), then municipality name, then phone validity
     cleaned = df[~df["_is_dup"]][out_cols].copy()
@@ -186,8 +221,6 @@ def run_dedup(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     cleaned = cleaned.sort_values(["_count", "municipality", "is_phone_invalid"], ascending=[False, True, True]).drop(columns=["_count"]).reset_index(drop=True)
     
     duplicates = df[df["_is_dup"]][dup_cols].copy()
-    # For duplicates, we also want them grouped by the count of their respective area in the CLEANED data for consistency, 
-    # but using their own area count is simpler.
     duplicates["_count"] = duplicates["municipality"].map(duplicates["municipality"].value_counts())
     duplicates = duplicates.sort_values(["_count", "municipality", "is_phone_invalid"], ascending=[False, True, True]).drop(columns=["_count"]).reset_index(drop=True)
 
@@ -195,8 +228,10 @@ def run_dedup(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
         "input_count": len(df),
         "dup_count": len(duplicates),
         "output_count": len(cleaned),
+        "chain_count": int(cleaned["is_chain"].sum()),
+        "normal_count": int((~cleaned["is_chain"]).sum()),
         "dup_rate": round(len(duplicates) / len(df) * 100, 1) if len(df) else 0,
-        "reasons": dup_counts,
+        "reasons": dict(dup_counts),
         "invalid_phone_count": int(cleaned["is_phone_invalid"].sum()),
         "municipality_counts": cleaned["municipality"].value_counts().to_dict()
     }
