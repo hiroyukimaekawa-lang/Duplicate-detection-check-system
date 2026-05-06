@@ -9,6 +9,7 @@ export default function Home() {
   const [summary, setSummary] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [criteria, setCriteria] = useState<string[]>(['phone', 'name', 'address']);
+  const [excludeChains, setExcludeChains] = useState<boolean>(false);
   const [processedResults, setProcessedResults] = useState<any>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -40,6 +41,7 @@ export default function Home() {
       formData.append('files', files[i]);
     }
     formData.append('criteria', JSON.stringify(criteria));
+    formData.append('exclude_chains', excludeChains.toString());
 
     try {
       const response = await fetch('/api/upload', {
@@ -64,7 +66,7 @@ export default function Home() {
     }
   };
 
-  const handleDownload = async () => {
+  const handleDownload = async (format: 'excel' | 'csv' = 'excel') => {
     if (!processedResults) {
       console.error('No processed results available');
       return;
@@ -73,7 +75,10 @@ export default function Home() {
       const response = await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ results: processedResults }),
+        body: JSON.stringify({ 
+          results: processedResults,
+          format: format
+        }),
       });
       if (!response.ok) throw new Error('Download failed');
       
@@ -81,7 +86,8 @@ export default function Home() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', 'restaurant_list.xlsx');
+      const extension = format === 'csv' ? 'csv' : 'xlsx';
+      link.setAttribute('download', `restaurant_list.${extension}`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -137,6 +143,18 @@ export default function Home() {
           <p style={{ fontSize: '0.8rem', color: 'hsl(var(--muted-foreground))', marginTop: '0.5rem' }}>
             ※「店名」と「住所」の両方を選択すると、より精度の高い名寄せが行われます。
           </p>
+          <div style={{ marginTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1.5rem' }}>
+            <h3 style={{ fontSize: '1rem', marginBottom: '1rem', color: 'hsl(var(--muted-foreground))' }}>その他のオプション:</h3>
+            <label className="checkbox-container">
+              <input 
+                type="checkbox" 
+                checked={excludeChains} 
+                onChange={(e) => setExcludeChains(e.target.checked)}
+              />
+              <span className="checkmark"></span>
+              <span style={{ fontSize: '1rem', color: '#ffaa00' }}>チェーン店（「〜店」など）を排除する</span>
+            </label>
+          </div>
         </div>
 
         <div 
@@ -213,6 +231,12 @@ export default function Home() {
               <p style={{ color: 'hsl(var(--muted-foreground))', fontSize: '0.9rem' }}>電話番号不備</p>
               <h3 style={{ fontSize: '2.5rem', color: '#ffaa00' }}>{summary.invalid_phone_count.toLocaleString()}</h3>
             </div>
+            {summary.excluded_chains_count > 0 && (
+              <div className="card glass">
+                <p style={{ color: 'hsl(var(--muted-foreground))', fontSize: '0.9rem' }}>排除チェーン店</p>
+                <h3 style={{ fontSize: '2.5rem', color: '#ffaa00' }}>{summary.excluded_chains_count.toLocaleString()}</h3>
+              </div>
+            )}
           </div>
 
           <div className="card glass" style={{ marginBottom: '2rem' }}>
@@ -243,9 +267,12 @@ export default function Home() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-            <button className="btn btn-secondary" onClick={handleDownload} style={{ padding: '1rem 3rem' }}>
-              統合リストをダウンロード (Excel)
+          <div style={{ display: 'flex', gap: '1.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" onClick={() => handleDownload('excel')} style={{ padding: '1rem 2.5rem' }}>
+              統合リスト (Excel)
+            </button>
+            <button className="btn btn-primary" onClick={() => handleDownload('csv')} style={{ padding: '1rem 2.5rem' }}>
+              統合リスト (CSV)
             </button>
           </div>
         </div>

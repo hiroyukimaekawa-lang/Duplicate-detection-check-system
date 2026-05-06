@@ -207,7 +207,7 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None) -
 
     return False, "", 0.0
 
-def run_dedup(df: pd.DataFrame, criteria: List[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+def run_dedup(df: pd.DataFrame, criteria: List[str] = None, exclude_chains: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     df = preprocess(df)
     blocks = build_blocks(df)
     
@@ -240,25 +240,36 @@ def run_dedup(df: pd.DataFrame, criteria: List[str] = None) -> Tuple[pd.DataFram
     out_cols = ["name", "brand", "is_chain", "address", "phone", "url", "source", "genre", "rating", "municipality", "is_phone_invalid"]
     dup_cols = ["name", "brand", "is_chain", "address", "phone", "url", "source", "_merged_to", "_dup_reason", "_dup_score", "municipality", "is_phone_invalid"]
 
-    # Sort by area count (descending), then municipality name, then phone validity
-    cleaned = df[~df["_is_dup"]][out_cols].copy()
-    cleaned["_count"] = cleaned["municipality"].map(cleaned["municipality"].value_counts())
-    cleaned = cleaned.sort_values(["_count", "municipality", "is_phone_invalid"], ascending=[False, True, True]).drop(columns=["_count"]).reset_index(drop=True)
+    # Filter out chains if requested
+    if exclude_chains:
+        # We can either delete them entirely or mark them as dup. Let's just remove them from cleaned.
+        cleaned = df[~df["_is_dup"] & ~df["is_chain"]][out_cols].copy()
+        # Optionally, we could track how many were excluded.
+        excluded_chains_count = df[~df["_is_dup"] & df["is_chain"]].shape[0]
+    else:
+        cleaned = df[~df["_is_dup"]][out_cols].copy()
+        excluded_chains_count = 0
+
+    if not cleaned.empty:
+        cleaned["_count"] = cleaned["municipality"].map(cleaned["municipality"].value_counts())
+        cleaned = cleaned.sort_values(["_count", "municipality", "is_phone_invalid"], ascending=[False, True, True]).drop(columns=["_count"]).reset_index(drop=True)
     
     duplicates = df[df["_is_dup"]][dup_cols].copy()
-    duplicates["_count"] = duplicates["municipality"].map(duplicates["municipality"].value_counts())
-    duplicates = duplicates.sort_values(["_count", "municipality", "is_phone_invalid"], ascending=[False, True, True]).drop(columns=["_count"]).reset_index(drop=True)
+    if not duplicates.empty:
+        duplicates["_count"] = duplicates["municipality"].map(duplicates["municipality"].value_counts())
+        duplicates = duplicates.sort_values(["_count", "municipality", "is_phone_invalid"], ascending=[False, True, True]).drop(columns=["_count"]).reset_index(drop=True)
 
     summary = {
         "input_count": len(df),
         "dup_count": len(duplicates),
         "output_count": len(cleaned),
-        "chain_count": int(cleaned["is_chain"].sum()),
-        "normal_count": int((~cleaned["is_chain"]).sum()),
+        "chain_count": int(df["is_chain"].sum()),
+        "normal_count": int((~df["is_chain"]).sum()),
+        "excluded_chains_count": excluded_chains_count,
         "dup_rate": round(len(duplicates) / len(df) * 100, 1) if len(df) else 0,
         "reasons": dict(dup_counts),
-        "invalid_phone_count": int(cleaned["is_phone_invalid"].sum()),
-        "municipality_counts": cleaned["municipality"].value_counts().to_dict()
+        "invalid_phone_count": int(cleaned["is_phone_invalid"].sum()) if not cleaned.empty else 0,
+        "municipality_counts": cleaned["municipality"].value_counts().to_dict() if not cleaned.empty else {}
     }
 
     return cleaned, duplicates, summary
