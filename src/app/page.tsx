@@ -94,31 +94,31 @@ export default function Home() {
         <div style={{ marginBottom: '2rem' }}>
           <h3 style={{ fontSize: '1rem', marginBottom: '1rem', color: 'hsl(var(--muted-foreground))' }}>重複チェックの基準を選択:</h3>
           <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
-            <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+            <label className="checkbox-container">
               <input 
                 type="checkbox" 
                 checked={criteria.includes('name')} 
                 onChange={() => toggleCriterion('name')}
-                style={{ width: '1.2rem', height: '1.2rem' }}
               />
+              <span className="checkmark"></span>
               <span style={{ fontSize: '1rem' }}>店名</span>
             </label>
-            <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+            <label className="checkbox-container">
               <input 
                 type="checkbox" 
                 checked={criteria.includes('phone')} 
                 onChange={() => toggleCriterion('phone')}
-                style={{ width: '1.2rem', height: '1.2rem' }}
               />
+              <span className="checkmark"></span>
               <span style={{ fontSize: '1rem' }}>電話番号</span>
             </label>
-            <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+            <label className="checkbox-container">
               <input 
                 type="checkbox" 
                 checked={criteria.includes('address')} 
                 onChange={() => toggleCriterion('address')}
-                style={{ width: '1.2rem', height: '1.2rem' }}
               />
+              <span className="checkmark"></span>
               <span style={{ fontSize: '1rem' }}>住所</span>
             </label>
           </div>
@@ -233,7 +233,7 @@ export default function Home() {
 
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
             <button className="btn btn-secondary" onClick={handleDownload} style={{ padding: '1rem 3rem' }}>
-              Excel形式で結果をダウンロード（2タブ）
+              Excel形式で結果をダウンロード（媒体別シート）
             </button>
           </div>
         </div>

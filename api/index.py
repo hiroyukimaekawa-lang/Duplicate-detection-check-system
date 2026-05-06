@@ -79,14 +79,27 @@ async def download_results():
     cleaned = processed_data["last_run"]["cleaned"]
     duplicates = processed_data["last_run"]["duplicates"]
     
+    source_map = {
+        "google": "Google Maps",
+        "tabelog": "食べログ",
+        "hotpepper": "ホットペッパー"
+    }
+
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Separate normal and chain stores into different sheets
-        normal = cleaned[cleaned["is_chain"] == False]
-        chains = cleaned[cleaned["is_chain"] == True]
+        # Split by source
+        sources = cleaned["source"].unique()
+        for src in sources:
+            sheet_name = source_map.get(src.lower(), src.capitalize())
+            # Sheet names must be <= 31 chars
+            sheet_name = sheet_name[:31]
+            src_df = cleaned[cleaned["source"] == src]
+            src_df.to_excel(writer, index=False, sheet_name=sheet_name)
         
-        normal.to_excel(writer, index=False, sheet_name='通常店舗')
-        chains.to_excel(writer, index=False, sheet_name='チェーン店舗')
+        # Also include a combined sheet for convenience
+        cleaned.to_excel(writer, index=False, sheet_name='統合データ')
+        
+        # Include duplicates
         duplicates.to_excel(writer, index=False, sheet_name='重複データ')
     
     output.seek(0)
