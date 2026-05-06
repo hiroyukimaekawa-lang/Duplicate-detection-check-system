@@ -8,6 +8,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [criteria, setCriteria] = useState<string[]>(['phone', 'name', 'address']);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -15,8 +16,20 @@ export default function Home() {
     }
   };
 
+  const toggleCriterion = (id: string) => {
+    setCriteria(prev => 
+      prev.includes(id) 
+        ? prev.filter(c => c !== id) 
+        : [...prev, id]
+    );
+  };
+
   const handleUpload = async () => {
     if (!files) return;
+    if (criteria.length === 0) {
+      setError('少なくとも一つの重複チェック項目を選択してください。');
+      return;
+    }
     setLoading(true);
     setError(null);
     setSummary(null);
@@ -25,6 +38,7 @@ export default function Home() {
     for (let i = 0; i < files.length; i++) {
       formData.append('files', files[i]);
     }
+    formData.append('criteria', JSON.stringify(criteria));
 
     try {
       const response = await fetch('/api/upload', {
@@ -33,7 +47,8 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        throw new Error('Upload failed');
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Upload failed');
       }
 
       const data = await response.json();
@@ -76,6 +91,42 @@ export default function Home() {
 
       <div className="card glass" style={{ marginBottom: '2rem' }}>
         <h2 style={{ marginBottom: '1.5rem' }}>CSVデータをアップロード</h2>
+        <div style={{ marginBottom: '2rem' }}>
+          <h3 style={{ fontSize: '1rem', marginBottom: '1rem', color: 'hsl(var(--muted-foreground))' }}>重複チェックの基準を選択:</h3>
+          <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+            <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              <input 
+                type="checkbox" 
+                checked={criteria.includes('name')} 
+                onChange={() => toggleCriterion('name')}
+                style={{ width: '1.2rem', height: '1.2rem' }}
+              />
+              <span style={{ fontSize: '1rem' }}>店名</span>
+            </label>
+            <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              <input 
+                type="checkbox" 
+                checked={criteria.includes('phone')} 
+                onChange={() => toggleCriterion('phone')}
+                style={{ width: '1.2rem', height: '1.2rem' }}
+              />
+              <span style={{ fontSize: '1rem' }}>電話番号</span>
+            </label>
+            <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              <input 
+                type="checkbox" 
+                checked={criteria.includes('address')} 
+                onChange={() => toggleCriterion('address')}
+                style={{ width: '1.2rem', height: '1.2rem' }}
+              />
+              <span style={{ fontSize: '1rem' }}>住所</span>
+            </label>
+          </div>
+          <p style={{ fontSize: '0.8rem', color: 'hsl(var(--muted-foreground))', marginTop: '0.5rem' }}>
+            ※「店名」と「住所」の両方を選択すると、より精度の高い名寄せが行われます。
+          </p>
+        </div>
+
         <div 
           style={{ 
             border: '2px dashed hsl(var(--border))', 

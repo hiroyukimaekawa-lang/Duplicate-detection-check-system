@@ -1,10 +1,11 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import pandas as pd
 import io
 import os
-from typing import List
+import json
+from typing import List, Optional
 from .dedup_engine import run_dedup
 # For Vercel serverless, sometimes absolute imports are needed:
 # from api.dedup_engine import run_dedup
@@ -28,7 +29,19 @@ async def root():
     return {"status": "ok", "message": "Duplicate Detection API is running"}
 
 @app.post("/api/upload")
-async def upload_files(files: List[UploadFile] = File(...)):
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    criteria: Optional[str] = Form(None)
+):
+    # Parse criteria if provided (it might come as a JSON string from the frontend)
+    criteria_list = None
+    if criteria:
+        try:
+            criteria_list = json.loads(criteria)
+        except:
+            # Fallback if it's just a comma-separated string
+            criteria_list = criteria.split(",")
+
     dfs = []
     for file in files:
         if not file.filename.endswith('.csv'):
@@ -46,7 +59,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
     combined_df = pd.concat(dfs, ignore_index=True)
     
-    cleaned, duplicates, summary = run_dedup(combined_df)
+    cleaned, duplicates, summary = run_dedup(combined_df, criteria=criteria_list)
     
     # Store results (using a simple ID for now)
     session_id = "last_run" 

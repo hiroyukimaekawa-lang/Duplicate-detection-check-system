@@ -129,7 +129,10 @@ def build_blocks(df: pd.DataFrame) -> Dict[str, List[int]]:
         blocks[key].append(idx)
     return dict(blocks)
 
-def is_duplicate(df: pd.DataFrame, i: int, j: int) -> Tuple[bool, str, float]:
+def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None) -> Tuple[bool, str, float]:
+    if criteria is None:
+        criteria = ["phone", "name", "address"] # Default behavior
+
     ri, rj = df.loc[i], df.loc[j]
     
     # 1. Same source skip
@@ -147,9 +150,9 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int) -> Tuple[bool, str, float]:
 
     # Special handling for chains: strictly require same address/phone
     if is_chain_i and is_chain_j:
-        if pi and pj and pi == pj:
+        if "phone" in criteria and pi and pj and pi == pj:
             return True, "chain_phone_exact", 100.0
-        if ai and aj:
+        if ai and aj and ("address" in criteria or "name" in criteria):
             addr_sim = fuzz.partial_ratio(ai, aj)
             if addr_sim >= THRESH_ADDR:
                 name_sim = fuzz.token_sort_ratio(ni, nj)
@@ -158,31 +161,53 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int) -> Tuple[bool, str, float]:
         return False, "", 0.0
 
     # Normal deduplication logic
-    if pi and pj and pi == pj:
-        return True, "phone_exact", 100.0
+    
+    # Phone match
+    if "phone" in criteria:
+        if pi and pj and pi == pj:
+            return True, "phone_exact", 100.0
 
+    # Name and Address logic
     if ni and nj:
         name_sim = fuzz.token_sort_ratio(ni, nj)
         name_base_sim = fuzz.token_sort_ratio(ri["_base_name"], rj["_base_name"])
         name_score = max(name_sim, name_base_sim)
 
-        if ai and aj:
-            addr_sim = fuzz.partial_ratio(ai, aj)
-            combined = name_score * SCORE_NAME_WEIGHT + addr_sim * SCORE_ADDR_WEIGHT
-            if name_score >= THRESH_NAME and addr_sim >= THRESH_ADDR:
-                return True, "name_addr_fuzzy", combined
-            if combined >= THRESH_COMBINED:
-                return True, "name_addr_score", combined
+        # Combined Name + Address
+        if "name" in criteria and "address" in criteria:
+            if ai and aj:
+                addr_sim = fuzz.partial_ratio(ai, aj)
+                combined = name_score * SCORE_NAME_WEIGHT + addr_sim * SCORE_ADDR_WEIGHT
+                if name_score >= THRESH_NAME and addr_sim >= THRESH_ADDR:
+                    return True, "name_addr_fuzzy", combined
+                if combined >= THRESH_COMBINED:
+                    return True, "name_addr_score", combined
+            
+            # If address is missing but name is very strong in same area
+            if name_score >= THRESH_NAME_AREA:
+                area_i = ri["_municipality"]
+                area_j = rj["_municipality"]
+                if area_i and area_j and area_i == area_j:
+                    return True, "name_area", float(name_score)
+        
+        # Only Name
+        elif "name" in criteria:
+            if name_score >= THRESH_NAME_AREA: # Use higher threshold for name-only
+                area_i = ri["_municipality"]
+                area_j = rj["_municipality"]
+                if area_i and area_j and area_i == area_j:
+                    return True, "name_only_match", float(name_score)
 
-        if name_score >= THRESH_NAME_AREA:
-            area_i = ri["_municipality"]
-            area_j = rj["_municipality"]
-            if area_i and area_j and area_i == area_j:
-                return True, "name_area", float(name_score)
+        # Only Address
+        elif "address" in criteria:
+            if ai and aj:
+                addr_sim = fuzz.partial_ratio(ai, aj)
+                if addr_sim >= 95: # Very high threshold for address-only
+                    return True, "address_only_match", float(addr_sim)
 
     return False, "", 0.0
 
-def run_dedup(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+def run_dedup(df: pd.DataFrame, criteria: List[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     df = preprocess(df)
     blocks = build_blocks(df)
     
@@ -197,7 +222,7 @@ def run_dedup(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
             for idx_b in block_sorted[pos_a + 1:]:
                 if df.at[idx_b, "_is_dup"]: continue
                 
-                dup, reason, score = is_duplicate(df, idx_a, idx_b)
+                dup, reason, score = is_duplicate(df, idx_a, idx_b, criteria)
                 if dup:
                     df.at[idx_b, "_is_dup"] = True
                     df.at[idx_b, "_merged_to"] = str(idx_a)
