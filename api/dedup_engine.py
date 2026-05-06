@@ -243,7 +243,7 @@ def run_dedup(df: pd.DataFrame, criteria: List[str] = None, exclude_chains: bool
     # Filter out chains if requested by marking them as duplicates
     if exclude_chains:
         excluded_mask = ~df["_is_dup"] & df["is_chain"]
-        excluded_chains_count = excluded_mask.sum()
+        excluded_chains_count = int(excluded_mask.sum())
         df.loc[excluded_mask, "_is_dup"] = True
         df.loc[excluded_mask, "_dup_reason"] = "chain_excluded"
         df.loc[excluded_mask, "_dup_score"] = 100.0
