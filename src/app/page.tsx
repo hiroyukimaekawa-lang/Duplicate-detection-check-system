@@ -9,6 +9,7 @@ export default function Home() {
   const [summary, setSummary] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [criteria, setCriteria] = useState<string[]>(['phone', 'name', 'address']);
+  const [processedResults, setProcessedResults] = useState<any>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -52,7 +53,10 @@ export default function Home() {
       }
 
       const data = await response.json();
-      setSummary(data);
+      setSummary(data.stats || data);
+      if (data.results) {
+        setProcessedResults(data.results);
+      }
     } catch (err: any) {
       setError(err.message || 'Something went wrong');
     } finally {
@@ -61,15 +65,23 @@ export default function Home() {
   };
 
   const handleDownload = async () => {
+    if (!processedResults) {
+      console.error('No processed results available');
+      return;
+    }
     try {
-      const response = await fetch('/api/download');
+      const response = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ results: processedResults }),
+      });
       if (!response.ok) throw new Error('Download failed');
       
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', 'dedup_results.xlsx');
+      link.setAttribute('download', 'restaurant_list.xlsx');
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -233,7 +245,7 @@ export default function Home() {
 
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
             <button className="btn btn-secondary" onClick={handleDownload} style={{ padding: '1rem 3rem' }}>
-              Excel形式で結果をダウンロード（媒体別シート）
+              統合リストをダウンロード (Excel)
             </button>
           </div>
         </div>

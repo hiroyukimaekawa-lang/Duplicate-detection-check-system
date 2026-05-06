@@ -21,8 +21,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory storage (Note: Vercel serverless is stateless, this may not persist between requests)
-processed_data = {}
+# In-memory storage is NOT used for Vercel deployment as it is stateless.
+# Data is passed through the frontend.
 
 @app.get("/api")
 async def root():
@@ -33,13 +33,12 @@ async def upload_files(
     files: List[UploadFile] = File(...),
     criteria: Optional[str] = Form(None)
 ):
-    # Parse criteria if provided (it might come as a JSON string from the frontend)
+    # Parse criteria
     criteria_list = None
     if criteria:
         try:
             criteria_list = json.loads(criteria)
         except:
-            # Fallback if it's just a comma-separated string
             criteria_list = criteria.split(",")
 
     dfs = []
@@ -57,57 +56,93 @@ async def upload_files(
     if not dfs:
         raise HTTPException(status_code=400, detail="No valid CSV files uploaded")
 
+    # Combine all DataFrames into one before dedup
     combined_df = pd.concat(dfs, ignore_index=True)
     
-    cleaned, duplicates, summary = run_dedup(combined_df, criteria=criteria_list)
+    # Process
+    cleaned_df, duplicates_df, stats = run_dedup(combined_df, criteria=criteria_list)
     
-    # Store results (using a simple ID for now)
-    session_id = "last_run" 
-    processed_data[session_id] = {
-        "cleaned": cleaned,
-        "duplicates": duplicates,
-        "summary": summary
+    # Return everything to the frontend
+    return {
+        "stats": stats,
+        "results": {
+            "cleaned": cleaned_df.to_json(orient="records"),
+            "duplicates": duplicates_df.to_json(orient="records")
+        }
     }
-
-    return summary
-
-@app.get("/api/download")
-async def download_results():
-    if "last_run" not in processed_data:
-        raise HTTPException(status_code=404, detail="No data available")
     
-    cleaned = processed_data["last_run"]["cleaned"]
-    duplicates = processed_data["last_run"]["duplicates"]
+@app.post("/api/download")
+async def download_results(payload: dict):
+    if "results" not in payload:
+        raise HTTPException(status_code=400, detail="No data provided")
     
-    source_map = {
+    results = payload["results"]
+    # Handle potentially empty data
+    try:
+        cleaned = pd.read_json(io.StringIO(results["cleaned"]))
+    except:
+        cleaned = pd.DataFrame()
+        
+    try:
+        duplicates = pd.read_json(io.StringIO(results["duplicates"]))
+    except:
+        duplicates = pd.DataFrame()
+    
+    # Map source values for the data inside the sheet
+    source_val_map = {
+        "google": "googlemaps",
+        "tabelog": "tabelog",
+        "hotpepper": "hotpepper"
+    }
+    
+    # Mapping for Tab Names
+    source_tab_map = {
         "google": "Google Maps",
         "tabelog": "食べログ",
         "hotpepper": "ホットペッパー"
     }
+    
+    # 1. Prepare Standardized "統合リスト"
+    display_df = cleaned.copy()
+    if not display_df.empty and "source" in display_df.columns:
+        display_df["source"] = display_df["source"].apply(lambda s: source_val_map.get(str(s).lower(), s))
+    
+    template_cols = ["name", "genre", "address", "phone", "url", "source"]
+    for col in template_cols:
+        if col not in display_df.columns:
+            display_df[col] = ""
+    
+    if not display_df.empty:
+        final_cleaned_df = display_df[template_cols]
+    else:
+        final_cleaned_df = pd.DataFrame(columns=template_cols)
 
+    # 2. Generate Excel
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Split by source
-        sources = cleaned["source"].unique()
-        for src in sources:
-            sheet_name = source_map.get(src.lower(), src.capitalize())
-            # Sheet names must be <= 31 chars
-            sheet_name = sheet_name[:31]
-            src_df = cleaned[cleaned["source"] == src]
-            src_df.to_excel(writer, index=False, sheet_name=sheet_name)
+        # Sheet 1: Standardized Cleaned List
+        final_cleaned_df.to_excel(writer, index=False, sheet_name='統合リスト')
         
-        # Also include a combined sheet for convenience
-        cleaned.to_excel(writer, index=False, sheet_name='統合データ')
-        
-        # Include duplicates
-        duplicates.to_excel(writer, index=False, sheet_name='重複データ')
+        # Original Media Sheets
+        if not cleaned.empty or not duplicates.empty:
+            full_original = pd.concat([cleaned, duplicates], ignore_index=True)
+            
+            if not full_original.empty and "source" in full_original.columns:
+                sources = full_original["source"].unique()
+                for src in sources:
+                    tab_name = source_tab_map.get(str(src).lower(), str(src).capitalize())
+                    src_df = full_original[full_original["source"] == src]
+                    src_df.to_excel(writer, index=False, sheet_name=tab_name[:31])
+            
+        # Sheet "重複データ"
+        duplicates.to_excel(writer, index=False, sheet_name='重複排除分')
     
     output.seek(0)
     
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=dedup_results.xlsx"}
+        headers={"Content-Disposition": "attachment; filename=restaurant_list.xlsx"}
     )
 
 if __name__ == "__main__":
