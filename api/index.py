@@ -111,12 +111,35 @@ async def download_results(payload: dict):
     final_cleaned_df = display_df[template_cols] if not display_df.empty else pd.DataFrame(columns=template_cols)
 
     if export_format == "csv":
-        output = io.StringIO()
-        final_cleaned_df.to_csv(output, index=False, encoding='utf-8-sig')
+        import zipfile
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+            # 1. 統合リスト
+            csv_buffer = io.StringIO()
+            final_cleaned_df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
+            zip_file.writestr("統合リスト.csv", csv_buffer.getvalue().encode('utf-8-sig'))
+            
+            # 2. 各媒体の元データ
+            if not cleaned.empty or not duplicates.empty:
+                full_original = pd.concat([cleaned, duplicates], ignore_index=True)
+                if not full_original.empty and "source" in full_original.columns:
+                    for src in full_original["source"].unique():
+                        tab_name = source_tab_map.get(str(src).lower(), str(src).capitalize())
+                        src_df = full_original[full_original["source"] == src]
+                        csv_buffer = io.StringIO()
+                        src_df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
+                        zip_file.writestr(f"{tab_name[:31]}.csv", csv_buffer.getvalue().encode('utf-8-sig'))
+            
+            # 3. 重複排除分
+            if not duplicates.empty:
+                csv_buffer = io.StringIO()
+                duplicates.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
+                zip_file.writestr("重複排除分.csv", csv_buffer.getvalue().encode('utf-8-sig'))
+        
         return StreamingResponse(
-            io.BytesIO(output.getvalue().encode('utf-8-sig')),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=restaurant_list.csv"}
+            io.BytesIO(zip_buffer.getvalue()),
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=restaurant_list_csv.zip"}
         )
 
     # Excel Generation (default)

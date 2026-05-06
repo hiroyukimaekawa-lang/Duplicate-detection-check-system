@@ -86,7 +86,7 @@ export default function Home() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const extension = format === 'csv' ? 'csv' : 'xlsx';
+      const extension = format === 'csv' ? 'zip' : 'xlsx';
       link.setAttribute('download', `restaurant_list.${extension}`);
       document.body.appendChild(link);
       link.click();

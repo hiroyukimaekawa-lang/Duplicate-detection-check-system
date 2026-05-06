@@ -240,16 +240,17 @@ def run_dedup(df: pd.DataFrame, criteria: List[str] = None, exclude_chains: bool
     out_cols = ["name", "brand", "is_chain", "address", "phone", "url", "source", "genre", "rating", "municipality", "is_phone_invalid"]
     dup_cols = ["name", "brand", "is_chain", "address", "phone", "url", "source", "_merged_to", "_dup_reason", "_dup_score", "municipality", "is_phone_invalid"]
 
-    # Filter out chains if requested
+    # Filter out chains if requested by marking them as duplicates
     if exclude_chains:
-        # We can either delete them entirely or mark them as dup. Let's just remove them from cleaned.
-        cleaned = df[~df["_is_dup"] & ~df["is_chain"]][out_cols].copy()
-        # Optionally, we could track how many were excluded.
-        excluded_chains_count = df[~df["_is_dup"] & df["is_chain"]].shape[0]
+        excluded_mask = ~df["_is_dup"] & df["is_chain"]
+        excluded_chains_count = excluded_mask.sum()
+        df.loc[excluded_mask, "_is_dup"] = True
+        df.loc[excluded_mask, "_dup_reason"] = "chain_excluded"
+        df.loc[excluded_mask, "_dup_score"] = 100.0
     else:
-        cleaned = df[~df["_is_dup"]][out_cols].copy()
         excluded_chains_count = 0
 
+    cleaned = df[~df["_is_dup"]][out_cols].copy()
     if not cleaned.empty:
         cleaned["_count"] = cleaned["municipality"].map(cleaned["municipality"].value_counts())
         cleaned = cleaned.sort_values(["_count", "municipality", "is_phone_invalid"], ascending=[False, True, True]).drop(columns=["_count"]).reset_index(drop=True)
