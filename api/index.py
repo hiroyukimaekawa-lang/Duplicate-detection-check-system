@@ -65,8 +65,66 @@ async def upload_files(
     # Combine all DataFrames into one before dedup
     combined_df = pd.concat(dfs, ignore_index=True)
     
-    # Process
-    cleaned_df, duplicates_df, stats = run_dedup(combined_df, criteria=criteria_list, exclude_chains=exclude_chains_bool)
+    # Pre-filter using external masters
+    from .filters import filter_out_unwanted
+    filtered_df, excluded_df, filter_stats = filter_out_unwanted(
+        combined_df,
+        exclude_chains=exclude_chains_bool
+    )
+    
+    # Process Deduplication
+    # We no longer pass exclude_chains to run_dedup as it is handled by filters
+    cleaned_df, duplicates_df, dedup_stats = run_dedup(filtered_df, criteria=criteria_list)
+    
+    # Merge excluded_df into duplicates_df so they show up in the "重複排除分" tab and original tabs
+    if not excluded_df.empty:
+        excluded_df["_is_dup"] = True
+        excluded_df["_dup_reason"] = excluded_df["_filter_reason"]
+        
+        # We need to compute 'municipality' and other missing columns to match dup_cols
+        for col in ["_merged_to", "_dup_score", "brand", "is_chain"]:
+            if col not in excluded_df.columns:
+                excluded_df[col] = ""
+                
+        if "municipality" not in excluded_df.columns:
+            from .dedup_engine import extract_municipality, normalize_address
+            excluded_df["municipality"] = excluded_df.get("address", "").apply(lambda x: extract_municipality(normalize_address(x)) if pd.notna(x) else "__unknown__")
+            
+        if "is_phone_invalid" not in excluded_df.columns:
+            excluded_df["is_phone_invalid"] = False
+
+        dup_cols = ["name", "brand", "is_chain", "address", "phone", "url", "source", "_merged_to", "_dup_reason", "_dup_score", "municipality", "is_phone_invalid"]
+        
+        # Add any missing columns from dup_cols just in case
+        for col in dup_cols:
+            if col not in excluded_df.columns:
+                excluded_df[col] = ""
+                
+        excluded_df = excluded_df[dup_cols].copy()
+        duplicates_df = pd.concat([duplicates_df, excluded_df], ignore_index=True)
+
+    # Compile final stats
+    stats = {
+        "original": len(combined_df),
+        "after_filter": filter_stats["after_filter"],
+        "duplicates_removed": len(duplicates_df) - len(excluded_df),
+        "final": len(cleaned_df),
+        "mall_excluded": filter_stats["mall_excluded"],
+        "chain_excluded": filter_stats["chain_excluded"],
+        # Keep original stats for backward compatibility in the frontend
+        "input_count": len(combined_df),
+        "dup_count": len(duplicates_df),
+        "output_count": len(cleaned_df),
+        "excluded_chains_count": filter_stats["chain_excluded"],
+        "dup_rate": round(len(duplicates_df) / len(combined_df) * 100, 1) if len(combined_df) else 0,
+        "invalid_phone_count": dedup_stats.get("invalid_phone_count", 0),
+        "municipality_counts": dedup_stats.get("municipality_counts", {}),
+        "reasons": {
+            **dedup_stats.get("reasons", {}),
+            "mall_excluded": filter_stats["mall_excluded"],
+            "chain_excluded": filter_stats["chain_excluded"]
+        }
+    }
     
     # Return everything to the frontend
     return {

@@ -237,6 +237,12 @@ export default function Home() {
                 <h3 style={{ fontSize: '2.5rem', color: '#ffaa00' }}>{summary.excluded_chains_count.toLocaleString()}</h3>
               </div>
             )}
+            {summary.mall_excluded > 0 && (
+              <div className="card glass">
+                <p style={{ color: 'hsl(var(--muted-foreground))', fontSize: '0.9rem' }}>商業施設除外</p>
+                <h3 style={{ fontSize: '2.5rem', color: '#ffaa00' }}>{summary.mall_excluded.toLocaleString()}</h3>
+              </div>
+            )}
           </div>
 
           <div className="card glass" style={{ marginBottom: '2rem' }}>

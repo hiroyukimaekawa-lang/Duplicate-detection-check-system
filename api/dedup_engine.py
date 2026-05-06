@@ -207,7 +207,7 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None) -
 
     return False, "", 0.0
 
-def run_dedup(df: pd.DataFrame, criteria: List[str] = None, exclude_chains: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+def run_dedup(df: pd.DataFrame, criteria: List[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     df = preprocess(df)
     blocks = build_blocks(df)
     
@@ -240,16 +240,6 @@ def run_dedup(df: pd.DataFrame, criteria: List[str] = None, exclude_chains: bool
     out_cols = ["name", "brand", "is_chain", "address", "phone", "url", "source", "genre", "rating", "municipality", "is_phone_invalid"]
     dup_cols = ["name", "brand", "is_chain", "address", "phone", "url", "source", "_merged_to", "_dup_reason", "_dup_score", "municipality", "is_phone_invalid"]
 
-    # Filter out chains if requested by marking them as duplicates
-    if exclude_chains:
-        excluded_mask = ~df["_is_dup"] & df["is_chain"]
-        excluded_chains_count = int(excluded_mask.sum())
-        df.loc[excluded_mask, "_is_dup"] = True
-        df.loc[excluded_mask, "_dup_reason"] = "chain_excluded"
-        df.loc[excluded_mask, "_dup_score"] = 100.0
-    else:
-        excluded_chains_count = 0
-
     cleaned = df[~df["_is_dup"]][out_cols].copy()
     if not cleaned.empty:
         cleaned["_count"] = cleaned["municipality"].map(cleaned["municipality"].value_counts())
@@ -266,7 +256,6 @@ def run_dedup(df: pd.DataFrame, criteria: List[str] = None, exclude_chains: bool
         "output_count": len(cleaned),
         "chain_count": int(df["is_chain"].sum()),
         "normal_count": int((~df["is_chain"]).sum()),
-        "excluded_chains_count": excluded_chains_count,
         "dup_rate": round(len(duplicates) / len(df) * 100, 1) if len(df) else 0,
         "reasons": dict(dup_counts),
         "invalid_phone_count": int(cleaned["is_phone_invalid"].sum()) if not cleaned.empty else 0,
