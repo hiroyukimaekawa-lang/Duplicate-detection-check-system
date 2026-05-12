@@ -1,10 +1,12 @@
 import logging
 import re
-import unicodedata
 from collections import defaultdict
 from typing import List, Dict, Tuple, Optional
 import pandas as pd
 from rapidfuzz import fuzz
+from .normalizer import normalize_name, normalize_address, extract_municipality, to_halfwidth
+from .model import DedupModel
+from .geocoder import GSIGeocoder
 
 # Constants from original dedup.py
 SCORE_NAME_WEIGHT = 0.6
@@ -24,9 +26,6 @@ BRANCH_WORDS = re.compile(
 
 logger = logging.getLogger("dedup_engine")
 
-def to_halfwidth(text: str) -> str:
-    return unicodedata.normalize("NFKC", text)
-
 def normalize_phone(raw: str) -> str:
     if not raw or pd.isna(raw):
         return ""
@@ -39,34 +38,6 @@ def extract_area_code(phone_norm: str) -> str:
     if len(phone_norm) >= 4:
         return phone_norm[:4]
     return phone_norm[:3] if len(phone_norm) >= 3 else phone_norm
-
-def normalize_address(raw: str) -> str:
-    if not raw or pd.isna(raw):
-        return ""
-    s = to_halfwidth(str(raw))
-    s = re.sub(r"\s+", "", s)
-    s = re.sub(r"[ー－−‐―]", "-", s)
-    s = re.sub(r"[^\w\d\-丁目番地号]", "", s)
-    return s.lower().strip()
-
-def extract_municipality(addr_norm: str) -> str:
-    if not addr_norm:
-        return "__unknown__"
-    # Capture Prefecture + Municipality (stops at City/Town/Village level)
-    m = re.search(r"(北海道|.{2,3}[都道府県])(.{2,6}[市区町村郡])", addr_norm)
-    if m:
-        return m.group(1) + m.group(2)
-    return addr_norm[:6] if len(addr_norm) >= 6 else addr_norm
-
-def normalize_name(raw: str) -> str:
-    if not raw or pd.isna(raw):
-        return ""
-    s = to_halfwidth(str(raw))
-    s = s.lower()
-    s = re.sub(r"[（(【\[].*?[）)\]】]", "", s)
-    s = re.sub(r"[^\w\s\-・]", "", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
 
 def name_base(name_norm: str) -> str:
     return BRANCH_WORDS.sub("", name_norm).strip()
@@ -83,7 +54,14 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
     df["_norm_name"] = df["name"].apply(normalize_name)
     df["_base_name"] = df["_norm_name"].apply(name_base)
     df["_area_code"] = df["_norm_phone"].apply(lambda p: extract_area_code(p) if p else "")
-    df["_municipality"] = df["_norm_address"].apply(extract_municipality)
+    
+    # Extract municipality from normalized address
+    # If the extract_municipality returns a tuple (pref, city), we join them
+    def _extract_muni(addr):
+        p, c = extract_municipality(addr)
+        return p + c if p or c else "__unknown__"
+        
+    df["_municipality"] = df["address"].apply(_extract_muni)
 
     # Chain Detection
     df["brand"] = df["_base_name"]
@@ -97,14 +75,18 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Check if phone number is valid (10-11 digits)
-    df["is_phone_invalid"] = df["_norm_phone"].apply(lambda x: len(x) < 10)
+    df["is_phone_invalid"] = df["_norm_phone"].apply(lambda x: len(x) < 10 if x else True)
+
+    # Geocoding removed as per user request
+    df["_lat"] = None
+    df["_lng"] = None
 
     df["_is_dup"] = False
     df["_merged_to"] = ""
     df["_dup_reason"] = ""
     df["_dup_score"] = 0.0
 
-    return df.reset_index(drop=True)
+    return df
 
 def richness_score(row: pd.Series) -> int:
     score = 0
@@ -129,7 +111,7 @@ def build_blocks(df: pd.DataFrame) -> Dict[str, List[int]]:
         blocks[key].append(idx)
     return dict(blocks)
 
-def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None) -> Tuple[bool, str, float]:
+def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, model: DedupModel = None) -> Tuple[bool, str, float]:
     if criteria is None:
         criteria = ["phone", "name", "address"] # Default behavior
 
@@ -139,7 +121,13 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None) -
     if ri["source"] == rj["source"]:
         return False, "", 0.0
 
-    # 2. Chain logic
+    # 2. ML Model Prediction (If model is available and trained)
+    if model and model.model is not None:
+        prob = model.predict_proba(ri.to_dict(), rj.to_dict())
+        if prob >= 0.7: # Threshold
+            return True, "ml_model", prob * 100.0
+
+    # 3. Chain logic
     # If both are chains, they must have the same address (or very close) to be considered duplicates
     is_chain_i = ri["is_chain"]
     is_chain_j = rj["is_chain"]
@@ -211,6 +199,9 @@ def run_dedup(df: pd.DataFrame, criteria: List[str] = None) -> Tuple[pd.DataFram
     df = preprocess(df)
     blocks = build_blocks(df)
     
+    # Initialize ML Model
+    model = DedupModel()
+    
     dup_counts = defaultdict(int)
 
     for block_key, indices in blocks.items():
@@ -222,7 +213,7 @@ def run_dedup(df: pd.DataFrame, criteria: List[str] = None) -> Tuple[pd.DataFram
             for idx_b in block_sorted[pos_a + 1:]:
                 if df.at[idx_b, "_is_dup"]: continue
                 
-                dup, reason, score = is_duplicate(df, idx_a, idx_b, criteria)
+                dup, reason, score = is_duplicate(df, idx_a, idx_b, criteria, model)
                 if dup:
                     df.at[idx_b, "_is_dup"] = True
                     df.at[idx_b, "_merged_to"] = str(idx_a)

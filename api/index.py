@@ -1,16 +1,23 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import pandas as pd
 import io
 import os
 import json
 from typing import List, Optional
 from .dedup_engine import run_dedup
+from .privacy import apply_privacy_masking
 # For Vercel serverless, sometimes absolute imports are needed:
 # from api.dedup_engine import run_dedup
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Duplicate Detection API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -21,6 +28,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+# Max file size: 10MB
+MAX_FILE_SIZE = 10 * 1024 * 1024
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    error_details = traceback.format_exc()
+    print(error_details)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "traceback": error_details}
+    )
+
 # In-memory storage is NOT used for Vercel deployment as it is stateless.
 # Data is passed through the frontend.
 
@@ -30,9 +59,11 @@ async def root():
 
 @app.post("/api/upload")
 async def upload_files(
+    request: Request,
     files: List[UploadFile] = File(...),
     criteria: Optional[str] = Form(None),
-    exclude_chains: Optional[str] = Form(None)
+    exclude_chains: Optional[str] = Form(None),
+    privacy_mode: Optional[str] = Form(None)
 ):
     # Parse criteria
     criteria_list = None
@@ -46,12 +77,21 @@ async def upload_files(
     exclude_chains_bool = False
     if exclude_chains:
         exclude_chains_bool = exclude_chains.lower() == 'true'
+    # Parse privacy_mode
+    privacy_mode_bool = False
+    if privacy_mode:
+        privacy_mode_bool = privacy_mode.lower() == 'true'
 
     dfs = []
     for file in files:
         if not file.filename.endswith('.csv'):
             continue
+            
+        # File Size Validation
         content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail=f"File too large: {file.filename} exceeds 10MB limit")
+            
         try:
             df = pd.read_csv(io.BytesIO(content), encoding="utf-8-sig", dtype=str)
             df.columns = df.columns.str.strip().str.lower()
@@ -87,8 +127,12 @@ async def upload_files(
                 excluded_df[col] = ""
                 
         if "municipality" not in excluded_df.columns:
-            from .dedup_engine import extract_municipality, normalize_address
-            excluded_df["municipality"] = excluded_df.get("address", "").apply(lambda x: extract_municipality(normalize_address(x)) if pd.notna(x) else "__unknown__")
+            from .normalizer import extract_municipality, normalize_address
+            def _extract_muni(addr):
+                if pd.isna(addr) or not addr: return "__unknown__"
+                p, c = extract_municipality(addr)
+                return p + c if p or c else "__unknown__"
+            excluded_df["municipality"] = excluded_df.get("address", "").apply(_extract_muni)
             
         if "is_phone_invalid" not in excluded_df.columns:
             excluded_df["is_phone_invalid"] = False
@@ -126,12 +170,42 @@ async def upload_files(
         }
     }
     
+    # Apply Privacy Masking if enabled
+    if privacy_mode_bool:
+        cleaned_df = apply_privacy_masking(cleaned_df)
+        duplicates_df = apply_privacy_masking(duplicates_df)
+
+    # Prepare samples for user review (Feedback Loop)
+    review_samples = []
+    if not duplicates_df.empty:
+        # Take a few samples that were matched by ML or fuzzy logic (not phone exact)
+        fuzzy_dups = duplicates_df[duplicates_df["_dup_reason"].isin(["ml_model", "name_addr_fuzzy", "name_addr_score", "name_area"])]
+        sample_size = min(5, len(fuzzy_dups)) if not fuzzy_dups.empty else 0
+        if sample_size > 0:
+            samples = fuzzy_dups.sample(sample_size)
+            for _, row in samples.iterrows():
+                # Find the 'master' row in cleaned_df or filtered_df
+                master_idx = row["_merged_to"]
+                if master_idx and str(master_idx).isdigit():
+                    try:
+                        m_idx = int(master_idx)
+                        if m_idx in filtered_df.index:
+                            master_row = filtered_df.loc[m_idx]
+                            review_samples.append({
+                                "row_a": master_row.to_dict(),
+                                "row_b": row.to_dict(),
+                                "reason": row["_dup_reason"]
+                            })
+                    except:
+                        continue
+
     # Return everything to the frontend
     return {
         "stats": stats,
         "results": {
             "cleaned": cleaned_df.to_json(orient="records"),
-            "duplicates": duplicates_df.to_json(orient="records")
+            "duplicates": duplicates_df.to_json(orient="records"),
+            "review_samples": review_samples
         }
     }
     
@@ -219,6 +293,33 @@ async def download_results(payload: dict):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=restaurant_list.xlsx"}
     )
+
+@app.post("/api/feedback")
+async def save_feedback(payload: dict):
+    """
+    Accepts feedback on a pair of records.
+    Payload: { "row_a": {}, "row_b": {}, "is_duplicate": bool }
+    """
+    if "row_a" not in payload or "row_b" not in payload:
+        raise HTTPException(status_code=400, detail="Incomplete feedback data")
+        
+    feedback_item = {
+        "row_a": payload["row_a"],
+        "row_b": payload["row_b"],
+        "is_duplicate": 1 if payload["is_duplicate"] else 0,
+        "timestamp": os.getenv("VERCEL_REGION", "local") # Optional metadata
+    }
+    
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    feedback_path = os.path.join(base_dir, "data", "feedback.jsonl")
+    
+    try:
+        os.makedirs(os.path.dirname(feedback_path), exist_ok=True)
+        with open(feedback_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(feedback_item, ensure_ascii=False) + "\n")
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save feedback: {e}")
 
 if __name__ == "__main__":
     import uvicorn

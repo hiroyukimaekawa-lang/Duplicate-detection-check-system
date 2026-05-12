@@ -4,3 +4,5 @@ pandas
 rapidfuzz
 openpyxl
 python-multipart
+slowapi
+httpx

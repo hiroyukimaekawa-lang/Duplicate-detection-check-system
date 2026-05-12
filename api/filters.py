@@ -6,11 +6,7 @@ import re
 _chains_master = []
 _mall_master = []
 
-def normalize(text):
-    if pd.isna(text):
-        return ""
-    # Convert to lowercase and remove spaces/full-width spaces
-    return str(text).lower().replace(" ", "").replace("　", "").strip()
+from .normalizer import normalize_name as normalize
 
 def load_master_csv(path: str) -> list:
     if not os.path.exists(path):

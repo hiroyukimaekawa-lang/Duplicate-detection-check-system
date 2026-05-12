@@ -10,6 +10,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [criteria, setCriteria] = useState<string[]>(['phone', 'name', 'address']);
   const [excludeChains, setExcludeChains] = useState<boolean>(false);
+  const [privacyMode, setPrivacyMode] = useState<boolean>(false);
   const [processedResults, setProcessedResults] = useState<any>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -42,6 +43,7 @@ export default function Home() {
     }
     formData.append('criteria', JSON.stringify(criteria));
     formData.append('exclude_chains', excludeChains.toString());
+    formData.append('privacy_mode', privacyMode.toString());
 
     try {
       const response = await fetch('/api/upload', {
@@ -153,6 +155,15 @@ export default function Home() {
               />
               <span className="checkmark"></span>
               <span style={{ fontSize: '1rem', color: '#ffaa00' }}>チェーン店（「〜店」など）を排除する</span>
+            </label>
+            <label className="checkbox-container" style={{ marginTop: '0.5rem' }}>
+              <input 
+                type="checkbox" 
+                checked={privacyMode} 
+                onChange={(e) => setPrivacyMode(e.target.checked)}
+              />
+              <span className="checkmark"></span>
+              <span style={{ fontSize: '1rem', color: '#00ccff' }}>個人情報保護モード（電話番号等をマスクする）</span>
             </label>
           </div>
         </div>
@@ -273,7 +284,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '1.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '1.5rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '3rem' }}>
             <button className="btn btn-secondary" onClick={() => handleDownload('excel')} style={{ padding: '1rem 2.5rem' }}>
               統合リスト (Excel)
             </button>
@@ -281,6 +292,84 @@ export default function Home() {
               統合リスト (CSV)
             </button>
           </div>
+
+          {processedResults.review_samples && processedResults.review_samples.length > 0 && (
+            <div className="card glass animate-fade-in" style={{ border: '1px solid hsl(var(--primary))' }}>
+              <h2 style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1.5rem' }}>🧠</span> AI判定の確認（フィードバック）
+              </h2>
+              <p style={{ color: 'hsl(var(--muted-foreground))', marginBottom: '2rem', fontSize: '0.9rem' }}>
+                システムが重複と判断したペアです。正誤を教えることで、AIの精度がさらに向上します。
+              </p>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                {processedResults.review_samples.map((sample: any, idx: number) => (
+                  <div key={idx} style={{ padding: '1.5rem', backgroundColor: 'rgba(255, 255, 255, 0.03)', borderRadius: 'var(--radius)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+                      <div>
+                        <p style={{ fontSize: '0.7rem', color: 'hsl(var(--primary))', fontWeight: 'bold' }}>レコード A (元データ)</p>
+                        <p style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{sample.row_a.name}</p>
+                        <p style={{ fontSize: '0.8rem', opacity: 0.8 }}>{sample.row_a.address}</p>
+                        <p style={{ fontSize: '0.8rem', opacity: 0.6 }}>{sample.row_a.phone}</p>
+                      </div>
+                      <div>
+                        <p style={{ fontSize: '0.7rem', color: 'hsl(var(--destructive))', fontWeight: 'bold' }}>レコード B (重複判定)</p>
+                        <p style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{sample.row_b.name}</p>
+                        <p style={{ fontSize: '0.8rem', opacity: 0.8 }}>{sample.row_b.address}</p>
+                        <p style={{ fontSize: '0.8rem', opacity: 0.6 }}>{sample.row_b.phone}</p>
+                      </div>
+                    </div>
+                    
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.8rem', padding: '0.2rem 0.6rem', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '10px' }}>
+                        判定理由: {sample.reason}
+                      </span>
+                      <div style={{ display: 'flex', gap: '1rem' }}>
+                        <button 
+                          className="btn" 
+                          style={{ backgroundColor: 'rgba(0, 255, 136, 0.1)', color: '#00ff88', border: '1px solid #00ff88', padding: '0.5rem 1rem' }}
+                          onClick={async (e) => {
+                            const btn = e.currentTarget;
+                            btn.disabled = true;
+                            btn.innerText = '送信中...';
+                            await fetch('/api/feedback', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ row_a: sample.row_a, row_b: sample.row_b, is_duplicate: true })
+                            });
+                            btn.innerText = '✅ 正解';
+                            btn.style.backgroundColor = '#00ff88';
+                            btn.style.color = '#000';
+                          }}
+                        >
+                          正しい (重複)
+                        </button>
+                        <button 
+                          className="btn" 
+                          style={{ backgroundColor: 'rgba(255, 68, 68, 0.1)', color: '#ff4444', border: '1px solid #ff4444', padding: '0.5rem 1rem' }}
+                          onClick={async (e) => {
+                            const btn = e.currentTarget;
+                            btn.disabled = true;
+                            btn.innerText = '送信中...';
+                            await fetch('/api/feedback', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ row_a: sample.row_a, row_b: sample.row_b, is_duplicate: false })
+                            });
+                            btn.innerText = '❌ 誤判定';
+                            btn.style.backgroundColor = '#ff4444';
+                            btn.style.color = '#fff';
+                          }}
+                        >
+                          間違い (別店舗)
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

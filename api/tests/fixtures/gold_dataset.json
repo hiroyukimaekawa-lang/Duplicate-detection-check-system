@@ -1,0 +1,32 @@
+[
+  {
+    "row_a": {"name": "焼鳥 鳥一郎", "address": "東京都新宿区歌舞伎町1-2-3", "phone": "03-1234-5678", "source": "google"},
+    "row_b": {"name": "鳥一郎 新宿店", "address": "新宿区歌舞伎町1丁目2番3号", "phone": "0312345678", "source": "tabelog"},
+    "is_duplicate": 1,
+    "reason": "phone_exact"
+  },
+  {
+    "row_a": {"name": "株式会社 鮨さとう", "address": "東京都中央区銀座1-1-1", "phone": "03-0000-0001", "source": "google"},
+    "row_b": {"name": "鮨 さとう", "address": "中央区銀座1-1-1 某ビル", "phone": "0300000001", "source": "hotpepper"},
+    "is_duplicate": 1,
+    "reason": "phone_exact_with_corpo"
+  },
+  {
+    "row_a": {"name": "イタリアン プリモ", "address": "大阪府大阪市北区梅田1-2-3", "phone": "06-1111-1111", "source": "google"},
+    "row_b": {"name": "Italian Primo", "address": "大阪市北区梅田1-2-3", "phone": "0611111111", "source": "tabelog"},
+    "is_duplicate": 1,
+    "reason": "name_translation_fuzzy"
+  },
+  {
+    "row_a": {"name": "和食処 たろう", "address": "東京都渋谷区道玄坂2-2-2", "phone": "03-2222-2222", "source": "google"},
+    "row_b": {"name": "和食処 たろう", "address": "東京都目黒区自由が丘1-1-1", "phone": "03-3333-3333", "source": "tabelog"},
+    "is_duplicate": 0,
+    "reason": "same_name_different_location"
+  },
+  {
+    "row_a": {"name": "マクドナルド 渋谷店", "address": "東京都渋谷区道玄坂1-1-1", "phone": "03-1111-0001", "source": "google"},
+    "row_b": {"name": "マクドナルド 新宿店", "address": "東京都新宿区歌舞伎町1-1-1", "phone": "03-1111-0002", "source": "tabelog"},
+    "is_duplicate": 0,
+    "reason": "same_brand_different_branch"
+  }
+]
