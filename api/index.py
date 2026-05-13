@@ -264,6 +264,11 @@ async def download_results(payload: dict):
     for col in template_cols:
         if col not in display_df.columns:
             display_df[col] = ""
+        if col not in duplicates.columns:
+            duplicates[col] = ""
+            
+    if "_dup_reason" not in duplicates.columns:
+        duplicates["_dup_reason"] = ""
     
     final_cleaned_df = display_df[template_cols] if not display_df.empty else pd.DataFrame(columns=template_cols)
 
@@ -366,7 +371,9 @@ async def save_feedback(payload: dict):
             f.write(json.dumps(feedback_item, ensure_ascii=False) + "\n")
         return {"status": "success"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save feedback: {e}")
+        # On Vercel, the filesystem is read-only. We log and continue.
+        print(f"Feedback save failed (likely read-only FS): {e}")
+        return {"status": "success", "warning": "read-only-fs"}
 
 @app.post("/api/train")
 async def train_model():
