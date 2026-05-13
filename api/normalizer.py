@@ -170,7 +170,7 @@ def extract_municipality(address: str) -> tuple[str, str]:
         return (pref, city_ward_match.group(1) + city_ward_match.group(2))
     
     # Otherwise match the first occurrence of City/Ward/Town/Village/County
-    muni_match = re.match(r"(.{2,8}?[市区町村郡])", rest)
+    muni_match = re.match(r"(.{1,8}?[市区町村郡])", rest)
     if muni_match:
         return (pref, muni_match.group(1))
     
