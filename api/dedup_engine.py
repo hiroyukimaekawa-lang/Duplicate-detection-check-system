@@ -118,9 +118,9 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
 
     ri, rj = df.loc[i], df.loc[j]
     
-    # 1. Same source skip
-    if ri["source"] == rj["source"]:
-        return False, "", 0.0
+    # 1. Same source skip (Removed to allow internal duplicates)
+    # if ri["source"] == rj["source"]:
+    #     return False, "", 0.0
 
     pi, pj = ri["_norm_phone"], rj["_norm_phone"]
     ai, aj = ri["_norm_address"], rj["_norm_address"]
