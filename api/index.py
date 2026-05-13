@@ -148,6 +148,10 @@ async def upload_files(
             if col not in excluded_df.columns:
                 excluded_df[col] = ""
                 
+        # Map filter reason to dup reason for consistent export
+        if "_filter_reason" in excluded_df.columns:
+            excluded_df["_dup_reason"] = excluded_df["_filter_reason"]
+
         excluded_df = excluded_df[dup_cols].copy()
         duplicates_df = pd.concat([duplicates_df, excluded_df], ignore_index=True)
 
@@ -250,38 +254,61 @@ async def download_results(payload: dict):
         import zipfile
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-            # 1. 統合リスト
-            csv_buffer = io.StringIO()
-            final_cleaned_df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
-            zip_file.writestr("統合リスト.csv", csv_buffer.getvalue().encode('utf-8-sig'))
+            # 1. 統合済みリスト
+            zip_file.writestr("統合済みリスト.csv", final_cleaned_df.to_csv(index=False, encoding='utf-8-sig'))
             
-            # 2. 各媒体の元データ
+            # 2. 重複排除分 (ロジックによる重複)
+            dups_real = duplicates[~duplicates["_dup_reason"].isin(["chain_excluded", "mall_excluded"])]
+            if not dups_real.empty:
+                zip_file.writestr("重複排除分.csv", dups_real[template_cols].to_csv(index=False, encoding='utf-8-sig'))
+            
+            # 3. 排除チェーン店
+            chains = duplicates[duplicates["_dup_reason"] == "chain_excluded"]
+            if not chains.empty:
+                zip_file.writestr("排除チェーン店.csv", chains[template_cols].to_csv(index=False, encoding='utf-8-sig'))
+            
+            # 4. 商業施設除外
+            malls = duplicates[duplicates["_dup_reason"] == "mall_excluded"]
+            if not malls.empty:
+                zip_file.writestr("商業施設除外.csv", malls[template_cols].to_csv(index=False, encoding='utf-8-sig'))
+            
+            # 5. 各媒体の元データ
             if not cleaned.empty or not duplicates.empty:
                 full_original = pd.concat([cleaned, duplicates], ignore_index=True)
                 if not full_original.empty and "source" in full_original.columns:
                     for src in full_original["source"].unique():
                         tab_name = source_tab_map.get(str(src).lower(), str(src).capitalize())
                         src_df = full_original[full_original["source"] == src]
-                        csv_buffer = io.StringIO()
-                        src_df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
-                        zip_file.writestr(f"{tab_name[:31]}.csv", csv_buffer.getvalue().encode('utf-8-sig'))
-            
-            # 3. 重複排除分
-            if not duplicates.empty:
-                csv_buffer = io.StringIO()
-                duplicates.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
-                zip_file.writestr("重複排除分.csv", csv_buffer.getvalue().encode('utf-8-sig'))
+                        zip_file.writestr(f"{tab_name[:31]}.csv", src_df.to_csv(index=False, encoding='utf-8-sig'))
         
         return StreamingResponse(
             io.BytesIO(zip_buffer.getvalue()),
             media_type="application/zip",
-            headers={"Content-Disposition": "attachment; filename=restaurant_list_csv.zip"}
+            headers={"Content-Disposition": "attachment; filename=results.zip"}
         )
 
     # Excel Generation (default)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        final_cleaned_df.to_excel(writer, index=False, sheet_name='統合リスト')
+        # 1. 統合済みリスト
+        final_cleaned_df.to_excel(writer, index=False, sheet_name="統合済みリスト")
+        
+        # 2. 重複排除分
+        dups_real = duplicates[~duplicates["_dup_reason"].isin(["chain_excluded", "mall_excluded"])]
+        if not dups_real.empty:
+            dups_real[template_cols].to_excel(writer, index=False, sheet_name="重複排除分")
+        
+        # 3. 排除チェーン店
+        chains = duplicates[duplicates["_dup_reason"] == "chain_excluded"]
+        if not chains.empty:
+            chains[template_cols].to_excel(writer, index=False, sheet_name="排除チェーン店")
+            
+        # 4. 商業施設除外
+        malls = duplicates[duplicates["_dup_reason"] == "mall_excluded"]
+        if not malls.empty:
+            malls[template_cols].to_excel(writer, index=False, sheet_name="商業施設除外")
+            
+        # 5. 各媒体の元データ
         if not cleaned.empty or not duplicates.empty:
             full_original = pd.concat([cleaned, duplicates], ignore_index=True)
             if not full_original.empty and "source" in full_original.columns:
@@ -289,13 +316,12 @@ async def download_results(payload: dict):
                     tab_name = source_tab_map.get(str(src).lower(), str(src).capitalize())
                     src_df = full_original[full_original["source"] == src]
                     src_df.to_excel(writer, index=False, sheet_name=tab_name[:31])
-        duplicates.to_excel(writer, index=False, sheet_name='重複排除分')
     
     output.seek(0)
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=restaurant_list.xlsx"}
+        headers={"Content-Disposition": "attachment; filename=results.xlsx"}
     )
 
 @app.post("/api/feedback")
