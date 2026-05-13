@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './globals.css';
 
 export default function Home() {
@@ -60,9 +60,9 @@ export default function Home() {
   };
 
   // Fetch config on mount
-  useState(() => {
+  useEffect(() => {
     fetchConfig();
-  });
+  }, []);
 
   const handleUpload = async () => {
     if (!files) return;
