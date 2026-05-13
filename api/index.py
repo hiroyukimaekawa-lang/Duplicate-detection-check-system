@@ -16,6 +16,7 @@ from .privacy import apply_privacy_masking
 
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Duplicate Detection API")
+GEMINI_API_KEY = "AIzaSyAdjPoqr7nfsbGRxCkD-xnZVet6bAKNLc8"
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -113,8 +114,11 @@ async def upload_files(
     )
     
     # Process Deduplication
-    # We no longer pass exclude_chains to run_dedup as it is handled by filters
-    cleaned_df, duplicates_df, dedup_stats = run_dedup(filtered_df, criteria=criteria_list)
+    cleaned_df, duplicates_df, dedup_stats = run_dedup(
+        filtered_df, 
+        criteria=criteria_list,
+        api_key=GEMINI_API_KEY
+    )
     
     # Merge excluded_df into duplicates_df so they show up in the "重複排除分" tab and original tabs
     if not excluded_df.empty:
@@ -320,6 +324,42 @@ async def save_feedback(payload: dict):
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save feedback: {e}")
+
+@app.post("/api/train")
+async def train_model():
+    """
+    Triggers re-training of the ML model using feedback.jsonl.
+    """
+    from .model import DedupModel
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    feedback_path = os.path.join(base_dir, "data", "feedback.jsonl")
+    
+    if not os.path.exists(feedback_path):
+        raise HTTPException(status_code=404, detail="No feedback data available for training.")
+        
+    labeled_pairs = []
+    try:
+        with open(feedback_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    labeled_pairs.append(json.loads(line))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading feedback: {e}")
+        
+    if not labeled_pairs:
+        raise HTTPException(status_code=400, detail="Feedback file is empty.")
+        
+    model = DedupModel()
+    result = model.train(labeled_pairs)
+    return result
+
+@app.get("/api/config")
+async def get_config():
+    """Returns system configuration status."""
+    return {
+        "gemini_active": bool(GEMINI_API_KEY),
+        "feedback_count": sum(1 for line in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "feedback.jsonl"), "r")) if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "feedback.jsonl")) else 0
+    }
 
 if __name__ == "__main__":
     import uvicorn

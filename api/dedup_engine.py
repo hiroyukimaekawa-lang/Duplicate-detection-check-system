@@ -7,6 +7,7 @@ from rapidfuzz import fuzz
 from .normalizer import normalize_name, normalize_address, extract_municipality, to_halfwidth
 from .model import DedupModel
 from .geocoder import GSIGeocoder
+from .ai_checker import GeminiChecker
 
 # Constants from original dedup.py
 SCORE_NAME_WEIGHT = 0.6
@@ -111,7 +112,7 @@ def build_blocks(df: pd.DataFrame) -> Dict[str, List[int]]:
         blocks[key].append(idx)
     return dict(blocks)
 
-def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, model: DedupModel = None) -> Tuple[bool, str, float]:
+def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, model: DedupModel = None, gemini: GeminiChecker = None) -> Tuple[bool, str, float]:
     if criteria is None:
         criteria = ["phone", "name", "address"] # Default behavior
 
@@ -121,25 +122,20 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
     if ri["source"] == rj["source"]:
         return False, "", 0.0
 
-    # 2. ML Model Prediction (If model is available and trained)
-    if model and model.model is not None:
-        prob = model.predict_proba(ri.to_dict(), rj.to_dict())
-        if prob >= 0.7: # Threshold
-            return True, "ml_model", prob * 100.0
-
-    # 3. Chain logic
-    # If both are chains, they must have the same address (or very close) to be considered duplicates
-    is_chain_i = ri["is_chain"]
-    is_chain_j = rj["is_chain"]
-
     pi, pj = ri["_norm_phone"], rj["_norm_phone"]
     ai, aj = ri["_norm_address"], rj["_norm_address"]
     ni, nj = ri["_norm_name"], rj["_norm_name"]
 
-    # Special handling for chains: strictly require same address/phone
+    # 2. Phone match
+    if "phone" in criteria:
+        if pi and pj and pi == pj:
+            return True, "phone_exact", 100.0
+
+    # 3. Chain logic
+    is_chain_i = ri["is_chain"]
+    is_chain_j = rj["is_chain"]
+
     if is_chain_i and is_chain_j:
-        if "phone" in criteria and pi and pj and pi == pj:
-            return True, "chain_phone_exact", 100.0
         if ai and aj and ("address" in criteria or "name" in criteria):
             addr_sim = fuzz.partial_ratio(ai, aj)
             if addr_sim >= THRESH_ADDR:
@@ -148,14 +144,8 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
                     return True, "chain_addr_name_match", float(addr_sim)
         return False, "", 0.0
 
-    # Normal deduplication logic
-    
-    # Phone match
-    if "phone" in criteria:
-        if pi and pj and pi == pj:
-            return True, "phone_exact", 100.0
-
-    # Name and Address logic
+    # 4. Normal fuzzy deduplication logic
+    name_score = 0.0
     if ni and nj:
         name_sim = fuzz.token_sort_ratio(ni, nj)
         name_base_sim = fuzz.token_sort_ratio(ri["_base_name"], rj["_base_name"])
@@ -171,7 +161,6 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
                 if combined >= THRESH_COMBINED:
                     return True, "name_addr_score", combined
             
-            # If address is missing but name is very strong in same area
             if name_score >= THRESH_NAME_AREA:
                 area_i = ri["_municipality"]
                 area_j = rj["_municipality"]
@@ -180,7 +169,7 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
         
         # Only Name
         elif "name" in criteria:
-            if name_score >= THRESH_NAME_AREA: # Use higher threshold for name-only
+            if name_score >= THRESH_NAME_AREA:
                 area_i = ri["_municipality"]
                 area_j = rj["_municipality"]
                 if area_i and area_j and area_i == area_j:
@@ -190,17 +179,35 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
         elif "address" in criteria:
             if ai and aj:
                 addr_sim = fuzz.partial_ratio(ai, aj)
-                if addr_sim >= 95: # Very high threshold for address-only
+                if addr_sim >= 95:
                     return True, "address_only_match", float(addr_sim)
 
+    # 5. ML Model Prediction
+    prob = 0.0
+    if model and model.model is not None:
+        prob = model.predict_proba(ri.to_dict(), rj.to_dict())
+        if prob >= 0.85:
+            return True, "ml_model", prob * 100.0
+
+    # 6. Gemini AI "Final Arbiter"
+    # Call Gemini if:
+    # - ML score is in "gray zone" (0.4 - 0.85)
+    # - OR Fuzzy name score is decent (e.g. > 60)
+    if gemini and gemini.model:
+        if (0.4 <= prob < 0.85) or (name_score > 60):
+            is_dup, reason = gemini.is_duplicate(ri.to_dict(), rj.to_dict())
+            if is_dup:
+                return True, "gemini_ai", 95.0
+    
     return False, "", 0.0
 
-def run_dedup(df: pd.DataFrame, criteria: List[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+def run_dedup(df: pd.DataFrame, criteria: List[str] = None, api_key: str = None) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     df = preprocess(df)
     blocks = build_blocks(df)
     
-    # Initialize ML Model
+    # Initialize ML Model and Gemini
     model = DedupModel()
+    gemini = GeminiChecker(api_key=api_key)
     
     dup_counts = defaultdict(int)
 
@@ -213,7 +220,7 @@ def run_dedup(df: pd.DataFrame, criteria: List[str] = None) -> Tuple[pd.DataFram
             for idx_b in block_sorted[pos_a + 1:]:
                 if df.at[idx_b, "_is_dup"]: continue
                 
-                dup, reason, score = is_duplicate(df, idx_a, idx_b, criteria, model)
+                dup, reason, score = is_duplicate(df, idx_a, idx_b, criteria, model, gemini)
                 if dup:
                     df.at[idx_b, "_is_dup"] = True
                     df.at[idx_b, "_merged_to"] = str(idx_a)

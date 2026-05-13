@@ -12,6 +12,8 @@ export default function Home() {
   const [excludeChains, setExcludeChains] = useState<boolean>(false);
   const [privacyMode, setPrivacyMode] = useState<boolean>(false);
   const [processedResults, setProcessedResults] = useState<any>(null);
+  const [config, setConfig] = useState<{gemini_active: boolean, feedback_count: number} | null>(null);
+  const [training, setTraining] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -26,6 +28,41 @@ export default function Home() {
         : [...prev, id]
     );
   };
+
+  const fetchConfig = async () => {
+    try {
+      const res = await fetch('/api/config');
+      if (res.ok) {
+        const data = await res.json();
+        setConfig(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch config', e);
+    }
+  };
+
+  const handleTrain = async () => {
+    setTraining(true);
+    try {
+      const res = await fetch('/api/train', { method: 'POST' });
+      if (res.ok) {
+        alert('AIモデルの再学習が完了しました！');
+        fetchConfig();
+      } else {
+        const data = await res.json();
+        alert('エラー: ' + data.detail);
+      }
+    } catch (e) {
+      alert('通信エラーが発生しました。');
+    } finally {
+      setTraining(false);
+    }
+  };
+
+  // Fetch config on mount
+  useState(() => {
+    fetchConfig();
+  });
 
   const handleUpload = async () => {
     if (!files) return;
@@ -105,8 +142,15 @@ export default function Home() {
           Deduplicator Pro
         </h1>
         <p style={{ color: 'hsl(var(--muted-foreground))' }}>
-          ファジーロジックを用いたスマートなレストランデータ重複排除
+          ファジーロジックと Gemini AI を用いたスマートなレストランデータ重複排除
         </p>
+        {config?.gemini_active && (
+          <div style={{ marginTop: '0.5rem' }}>
+            <span style={{ backgroundColor: 'rgba(0, 204, 255, 0.1)', color: '#00ccff', padding: '0.2rem 0.8rem', borderRadius: '20px', fontSize: '0.8rem', border: '1px solid #00ccff' }}>
+              ✨ Gemini AI 連携済み (gemini-2.0-flash)
+            </span>
+          </div>
+        )}
       </header>
 
       <div className="card glass" style={{ marginBottom: '2rem' }}>
@@ -166,6 +210,22 @@ export default function Home() {
               <span style={{ fontSize: '1rem', color: '#00ccff' }}>個人情報保護モード（電話番号等をマスクする）</span>
             </label>
           </div>
+          {config && config.feedback_count > 0 && (
+            <div style={{ marginTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <h3 style={{ fontSize: '1rem', color: 'hsl(var(--muted-foreground))' }}>AI学習データ:</h3>
+                <p style={{ fontSize: '0.8rem' }}>現在 {config.feedback_count} 件のフィードバックが蓄積されています。</p>
+              </div>
+              <button 
+                className="btn" 
+                onClick={handleTrain}
+                disabled={training}
+                style={{ backgroundColor: 'rgba(0, 255, 136, 0.1)', color: '#00ff88', border: '1px solid #00ff88' }}
+              >
+                {training ? '学習中...' : 'AIモデルを再学習させる'}
+              </button>
+            </div>
+          )}
         </div>
 
         <div 
@@ -321,8 +381,15 @@ export default function Home() {
                     </div>
                     
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.8rem', padding: '0.2rem 0.6rem', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '10px' }}>
-                        判定理由: {sample.reason}
+                      <span style={{ 
+                        fontSize: '0.8rem', 
+                        padding: '0.2rem 0.6rem', 
+                        backgroundColor: sample.reason === 'gemini_ai' ? 'rgba(0, 204, 255, 0.2)' : 'rgba(255,255,255,0.1)', 
+                        borderRadius: '10px',
+                        border: sample.reason === 'gemini_ai' ? '1px solid #00ccff' : 'none',
+                        color: sample.reason === 'gemini_ai' ? '#00ccff' : 'inherit'
+                      }}>
+                        判定理由: {sample.reason === 'gemini_ai' ? '✨ Gemini AI' : sample.reason}
                       </span>
                       <div style={{ display: 'flex', gap: '1rem' }}>
                         <button 

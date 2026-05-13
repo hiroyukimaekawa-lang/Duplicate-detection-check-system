@@ -6,3 +6,6 @@ openpyxl
 python-multipart
 slowapi
 httpx
+scikit-learn
+joblib
+google-generativeai
