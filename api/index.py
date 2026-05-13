@@ -20,6 +20,16 @@ GEMINI_API_KEY = "AIzaSyAdjPoqr7nfsbGRxCkD-xnZVet6bAKNLc8"
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+def clean_nan(obj):
+    """Recursively replace NaN with None for JSON compliance."""
+    if isinstance(obj, dict):
+        return {k: clean_nan(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_nan(v) for v in obj]
+    elif isinstance(obj, float) and pd.isna(obj):
+        return None
+    return obj
+
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
@@ -212,18 +222,17 @@ async def upload_files(
                         continue
 
     # Return everything to the frontend
-    # Replace NaN with None to avoid JSON serialization errors
-    cleaned_dict = cleaned_df.where(pd.notnull(cleaned_df), None).to_dict(orient="records")
-    duplicates_dict = duplicates_df.where(pd.notnull(duplicates_df), None).to_dict(orient="records")
-    
-    return {
+    response_data = {
         "stats": stats,
         "results": {
-            "cleaned": cleaned_dict,
-            "duplicates": duplicates_dict,
+            "cleaned": cleaned_df.to_dict(orient="records"),
+            "duplicates": duplicates_df.to_dict(orient="records"),
             "review_samples": review_samples
         }
     }
+    
+    # Final recursive cleaning to ensure NO NaN values reach the JSON serializer
+    return clean_nan(response_data)
     
 @app.post("/api/download")
 async def download_results(payload: dict):
