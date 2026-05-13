@@ -199,20 +199,28 @@ async def upload_files(
                         m_idx = int(master_idx)
                         if m_idx in filtered_df.index:
                             master_row = filtered_df.loc[m_idx]
+                            # Clean NaN from dicts
+                            row_a_dict = {k: (v if pd.notnull(v) else None) for k, v in master_row.to_dict().items()}
+                            row_b_dict = {k: (v if pd.notnull(v) else None) for k, v in row.to_dict().items()}
+                            
                             review_samples.append({
-                                "row_a": master_row.to_dict(),
-                                "row_b": row.to_dict(),
+                                "row_a": row_a_dict,
+                                "row_b": row_b_dict,
                                 "reason": row["_dup_reason"]
                             })
                     except:
                         continue
 
     # Return everything to the frontend
+    # Replace NaN with None to avoid JSON serialization errors
+    cleaned_dict = cleaned_df.where(pd.notnull(cleaned_df), None).to_dict(orient="records")
+    duplicates_dict = duplicates_df.where(pd.notnull(duplicates_df), None).to_dict(orient="records")
+    
     return {
         "stats": stats,
         "results": {
-            "cleaned": cleaned_df.to_json(orient="records"),
-            "duplicates": duplicates_df.to_json(orient="records"),
+            "cleaned": cleaned_dict,
+            "duplicates": duplicates_dict,
             "review_samples": review_samples
         }
     }
@@ -226,12 +234,12 @@ async def download_results(payload: dict):
     results = payload["results"]
     
     try:
-        cleaned = pd.read_json(io.StringIO(results["cleaned"]))
+        cleaned = pd.DataFrame(results["cleaned"])
     except:
         cleaned = pd.DataFrame()
         
     try:
-        duplicates = pd.read_json(io.StringIO(results["duplicates"]))
+        duplicates = pd.DataFrame(results["duplicates"])
     except:
         duplicates = pd.DataFrame()
     
