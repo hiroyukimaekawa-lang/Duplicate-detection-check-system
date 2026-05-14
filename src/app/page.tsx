@@ -9,7 +9,7 @@ export default function Home() {
   const [summary, setSummary] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [criteria, setCriteria] = useState<string[]>(['phone', 'name', 'address']);
-  const [excludeChains, setExcludeChains] = useState<boolean>(false);
+  const [excludeChains, setExcludeChains] = useState<boolean>(true);
   const [privacyMode, setPrivacyMode] = useState<boolean>(false);
   const [processedResults, setProcessedResults] = useState<any>(null);
   const [config, setConfig] = useState<{gemini_active: boolean, feedback_count: number} | null>(null);
