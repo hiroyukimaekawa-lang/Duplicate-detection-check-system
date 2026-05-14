@@ -187,7 +187,9 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
     prob = 0.0
     if model and model.model is not None:
         prob = model.predict_proba(ri.to_dict(), rj.to_dict())
-        if prob >= 0.85:
+        # High threshold (0.95) because the model has little training data yet.
+        # As feedback accumulates via "誤判定" button, this can be lowered.
+        if prob >= 0.95:
             return True, "ml_model", prob * 100.0
 
     # 6. Gemini AI "Final Arbiter"
