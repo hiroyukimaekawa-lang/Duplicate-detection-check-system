@@ -8,11 +8,15 @@ logger = logging.getLogger("ai_checker")
 class GeminiChecker:
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("GOOGLE_GEMINI_API_KEY")
+        self.model = None
+        self.cooling_until = 0
         if self.api_key:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
+            try:
+                genai.configure(api_key=self.api_key)
+                self.model = genai.GenerativeModel('gemini-2.0-flash')
+            except Exception as e:
+                logger.error(f"Failed to initialize Gemini: {e}")
         else:
-            self.model = None
             logger.warning("Gemini API key not found. AI Checker will be disabled.")
 
     def is_duplicate(self, row_a: dict, row_b: dict) -> tuple[bool, str]:
@@ -22,6 +26,10 @@ class GeminiChecker:
         """
         if not self.model:
             return False, "Gemini not configured"
+
+        import time
+        if time.time() < self.cooling_until:
+            return False, "Gemini is cooling down due to rate limit"
 
         prompt = f"""
 以下の2つのレストランデータが「同一店舗」かどうかを判定してください。
@@ -56,5 +64,11 @@ class GeminiChecker:
             res_json = json.loads(response.text)
             return res_json.get("is_duplicate", False), res_json.get("reason", "")
         except Exception as e:
-            logger.error(f"Gemini API error: {e}")
-            return False, f"Error: {str(e)}"
+            err_msg = str(e)
+            if "429" in err_msg or "quota" in err_msg.lower():
+                logger.warning("Gemini API Rate Limit hit. Cooling down for 60s.")
+                import time
+                self.cooling_until = time.time() + 60
+            else:
+                logger.error(f"Gemini API error: {e}")
+            return False, f"Error: {err_msg}"

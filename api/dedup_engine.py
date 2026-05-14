@@ -161,7 +161,8 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
                 if combined >= THRESH_COMBINED:
                     return True, "name_addr_score", combined
             
-            if name_score >= THRESH_NAME_AREA:
+            # Name + Same Area: require higher threshold to prevent false merges
+            if name_score >= 92:
                 area_i = ri["_municipality"]
                 area_j = rj["_municipality"]
                 if area_i and area_j and area_i == area_j:
@@ -169,7 +170,7 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
         
         # Only Name
         elif "name" in criteria:
-            if name_score >= THRESH_NAME_AREA:
+            if name_score >= 92:
                 area_i = ri["_municipality"]
                 area_j = rj["_municipality"]
                 if area_i and area_j and area_i == area_j:
@@ -190,11 +191,20 @@ def is_duplicate(df: pd.DataFrame, i: int, j: int, criteria: List[str] = None, m
             return True, "ml_model", prob * 100.0
 
     # 6. Gemini AI "Final Arbiter"
-    # Call Gemini if:
-    # - ML score is in "gray zone" (0.4 - 0.85)
-    # - OR Fuzzy name score is decent (e.g. > 60)
+    # Call Gemini ONLY when there is genuine ambiguity:
+    #   - Name similarity is in a "gray zone" (70-89) AND addresses exist
+    #   - OR ML model is uncertain (0.5 - 0.85)
+    # This avoids wasting API calls on clearly unrelated pairs.
     if gemini and gemini.model:
-        if (0.4 <= prob < 0.85) or (name_score > 60):
+        should_ask_ai = False
+        if 0.5 <= prob < 0.85:
+            should_ask_ai = True
+        elif 70 <= name_score < 90 and ai and aj:
+            addr_sim = fuzz.partial_ratio(ai, aj) if ai and aj else 0
+            if addr_sim >= 60:
+                should_ask_ai = True
+        
+        if should_ask_ai:
             is_dup, reason = gemini.is_duplicate(ri.to_dict(), rj.to_dict())
             if is_dup:
                 return True, "gemini_ai", 95.0
